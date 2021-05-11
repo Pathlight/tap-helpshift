@@ -1,9 +1,28 @@
 import requests
 import singer
 import time
+import urllib
 
 
 LOGGER = singer.get_logger()
+
+
+def set_query_parameters(url, **params):
+    """Given a URL, set or replace a query parameter and return the
+    modified URL.
+    >>> set_query_parameters('http://example.com?foo=bar&biz=baz', foo='stuff', bat='boots')
+    'http://example.com?foo=stuff&biz=baz&bat=boots'
+    """
+    scheme, netloc, path, query_string, fragment = urllib.parse.urlsplit(url)
+    query_params = urllib.parse.parse_qs(query_string)
+
+    new_query_string = ''
+
+    for param_name, param_value in params.items():
+        query_params[param_name] = [param_value]
+        new_query_string = urllib.parse.urlencode(query_params, doseq=True)
+
+    return urllib.parse.urlunsplit((scheme, netloc, path, new_query_string, fragment))
 
 
 class HelpshiftAPI:
@@ -41,3 +60,32 @@ class HelpshiftAPI:
                 break
 
         return resp.json()
+
+    def paging_get(self, url, results_key, **get_args):
+        next_page = 1
+        total_returned = 0
+
+        get_args = {k: v for k, v in get_args.items() if v is not None}
+
+        while next_page:
+            get_args['page'] = next_page
+            data = self.get(set_query_parameters(url, **get_args))
+
+            if next_page == 1:
+                total_size = data.get('total-hits')
+                total_pages = data.get('total-pages')
+
+            LOGGER.info('helpshift paging request', extra={
+                'total_size': total_size,
+                'total_pages': total_pages,
+                'page': next_page,
+                'results_key': results_key,
+                'url': url,
+                'total_returned': total_returned
+            })
+
+            for record in data[results_key]:
+                total_returned += 1
+                yield record
+
+            next_page = next_page + 1 if next_page < total_pages else None
