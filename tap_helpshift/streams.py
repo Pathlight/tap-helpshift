@@ -59,9 +59,13 @@ class Issues(Stream):
 
         messages_stream = Messages(self.client)
 
-        for row in self.client.paging_get('issues', self.results_key, updated_since=curr_synced_thru):
-            for key, value in row.items():
-                record = {k: self.transform_value(k, v) for (k, v) in row.items()}
+        for row in self.client.paging_get(
+                                          'issues',
+                                          self.results_key,
+                                          self.replication_key,
+                                          updated_since=curr_synced_thru
+        ):
+            record = {k: self.transform_value(k, v) for (k, v) in row.items()}
             yield(self.stream, record)
 
             if messages_stream.is_selected() and row.get('messages'):

@@ -61,24 +61,33 @@ class HelpshiftAPI:
 
         return resp.json()
 
-    def paging_get(self, url, results_key, **get_args):
+    def paging_get(self, url, results_key, replication_key=None, **get_args):
         next_page = 1
         total_returned = 0
+        max_synced = None
 
         get_args = {k: v for k, v in get_args.items() if v is not None}
         if results_key == 'issues':
             get_args['sort-order'] = 'asc'
 
         while next_page:
+            # Helpshift returns a 400 error when the number of issues
+            # requested exceeds 50000. Because records are returned in asc
+            # order, we can start a new request at page 1 using the last
+            # updated_at time we saw.
+            if next_page > 500 and results_key == 'issues':
+                LOGGER.info('helpshift query exceeded 500 pages, starting loop over')
+                next_page = 1
+                get_args['updated_since'] = max_synced
+
             get_args['page'] = next_page
+
             data = self.get(set_query_parameters(url, **get_args))
 
-            if next_page == 1:
-                total_size = data.get('total-hits')
-                total_pages = data.get('total-pages')
+            total_pages = data.get('total-pages')
 
             LOGGER.info('helpshift paging request', extra={
-                'total_size': total_size,
+                'total_size': data.get('total-hits'),
                 'total_pages': total_pages,
                 'page': next_page,
                 'results_key': results_key,
@@ -88,6 +97,8 @@ class HelpshiftAPI:
 
             for record in data[results_key]:
                 total_returned += 1
+                if replication_key:
+                    max_synced = record[replication_key]
                 yield record
 
             next_page = next_page + 1 if next_page < total_pages else None
