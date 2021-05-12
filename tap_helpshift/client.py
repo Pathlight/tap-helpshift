@@ -27,7 +27,7 @@ def set_query_parameters(url, **params):
 
 class HelpshiftAPI:
     MAX_RETRIES = 10
-    WAIT_TO_RETY = 60  # documentation doesn't include error handling
+    WAIT_TO_RETRY = 60  # documentation doesn't include error handling
 
     def __init__(self, config):
         api_key = config['api_key']
@@ -46,15 +46,15 @@ class HelpshiftAPI:
                 resp.raise_for_status()
             except requests.exceptions.RequestException:
                 if resp.status_code == 429 and num_retries < self.MAX_RETRIES:
-                    LOGGER.info('api query helpshift rate limit')
+                    LOGGER.info(f'api query helpshift rate limit {resp.text}')
                     time.sleep(self.WAIT_TO_RETRY)
                 elif resp.status_code >= 500 and num_retries < self.MAX_RETRIES:
                     LOGGER.info('api query helpshift 5xx error', extra={
                         'url': url
                     })
-                    time.sleep(10)
+                    time.sleep(self.WAIT_TO_RETRY)
                 else:
-                    raise Exception(f'helpshift query error: {resp.status_code}')
+                    raise Exception(f'helpshift query error: {resp.status_code} - {resp.text}')
 
             if resp and resp.status_code == 200:
                 break
@@ -66,6 +66,8 @@ class HelpshiftAPI:
         total_returned = 0
 
         get_args = {k: v for k, v in get_args.items() if v is not None}
+        if results_key == 'issues':
+            get_args['sort-order'] = 'asc'
 
         while next_page:
             get_args['page'] = next_page
