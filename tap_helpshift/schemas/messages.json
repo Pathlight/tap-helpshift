@@ -63,7 +63,7 @@
         "string"
       ]
     },
-    "message_id": {
+    "issue_id": {
       "type": [
         "null",
         "integer"
