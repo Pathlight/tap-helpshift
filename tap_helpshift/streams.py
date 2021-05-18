@@ -11,11 +11,22 @@ SUB_STREAMS = {
 }
 
 
+def iso_format(date_value):
+    if isinstance(date_value, str):
+        return date_value
+    value = datetime.datetime.utcfromtimestamp(date_value/1000.0)
+    value = datetime.datetime.strftime(value, '%Y-%m-%dT%H:%M:%S')
+    return value
+
+
 class Stream():
     name = None
+    url = None
     replication_method = None
     key_properties = None
     stream = None
+    datetime_fields = None
+    date_format = None
 
     def __init__(self, client=None, start_date=None):
         self.client = client
@@ -43,6 +54,7 @@ class Stream():
 
 class Issues(Stream):
     name = 'issues'
+    url = 'issues'
     replication_method = 'INCREMENTAL'
     key_properties = ['id']
     replication_key = 'updated_at'  # TODO
@@ -60,7 +72,7 @@ class Issues(Stream):
         messages_stream = Messages(self.client)
 
         for row in self.client.paging_get(
-                                          'issues',
+                                          self.url,
                                           self.results_key,
                                           self.replication_key,
                                           updated_since=curr_synced_thru
@@ -80,7 +92,7 @@ class Messages(Stream):
     name = 'messages'
     replication_method = 'INCREMENTAL'
     key_properties = ['id']
-    replication_method = 'created_at'
+    replication_key = 'created_at'
     datetime_fields = set(['created_at'])
 
     def sync(self, issue):
@@ -92,18 +104,48 @@ class Messages(Stream):
 
 class Agents(Stream):
     name = 'agents'
+    url = 'agents'
     replication_method = 'FULL_TABLE'
     key_properties = ['id']
     results_key = 'profiles'
 
     def sync(self, state):
 
-        for row in self.client.paging_get('agents', self.results_key):
+        for row in self.client.paging_get(self.url, self.results_key):
             yield(self.stream, row)
+
+
+class IssueAnalytics(Stream):
+    name = 'issue_analytics'
+    url = 'analytics/issue'
+    key_properites = ['row_id']
+    replication_method = 'INCREMENTAL'
+    replication_key = 'updated_at'
+
+    def sync(self, state):
+        try:
+            sync_thru = singer.get_bookmark(state, self.name, self.replication_key)
+        except TypeError:
+            sync_thru = self.start_date
+
+        sync_thru = iso_format(sync_thru)
+        curr_synced_thru = max(sync_thru, iso_format(self.start_date))
+
+        for row in self.client.analytics_paging_get(
+            self.url,
+            sync_thru=curr_synced_thru
+        ):
+            yield(self.stream, row)
+
+            curr_synced_thru = max(curr_synced_thru, row[self.replication_key])
+
+        if curr_synced_thru > sync_thru:
+            singer.write_bookmark(state, self.name, self.replication_key, curr_synced_thru)
 
 
 STREAMS = {
     'issues': Issues,
     'messages': Messages,
-    'agents': Agents
+    'agents': Agents,
+    'issue_analytics': IssueAnalytics
 }
