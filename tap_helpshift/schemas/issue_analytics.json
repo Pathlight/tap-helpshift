@@ -1,0 +1,297 @@
+{
+  "type": [
+    "null",
+    "object"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "row_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "created_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
+    },
+    "app_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "app_name": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "platform_type": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "email": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "updated_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
+    },
+    "ttfa": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "ttfr": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "ttr": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "tter_sum": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "tter_count": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "inbound_messages": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "outbound_messages": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "agent_outbound_messages": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "custombot_outbound_messages": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "other_outbound_messages": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "accepted_resolutions": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "rejected_resolutions": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "reopens": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "holding_time": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "handling_time": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "first_assigned_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
+    },
+    "first_responded_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
+    },
+    "last_resolved_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": [
+          "null",
+          "string"
+        ]
+      }
+    },
+    "initial_queue_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "initial_queue_name": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "current_queue_name": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "current_queue_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "original_issue_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "inbound_phone_calls": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "outbound_phone_calls": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "phone_escalations": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "is_from_phone_deflection": {
+      "type": [
+        "null",
+        "boolean"
+      ]
+    },
+    "id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "external_user_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "language": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "state": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "feedback_rating": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "feedback_comment": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "feedback_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
+    },
+    "assignee_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "avg_tter": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "automation_subcategory_by_outbound_messages": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "automation_category_by_outbound_messages": {
+      "type": [
+        "null",
+        "string"
+      ]
+    }
+  }
+}
