@@ -1,0 +1,108 @@
+{
+    "type": [
+        "null",
+        "object"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "id": {
+            "type": [
+                "null",
+                "string"
+            ]
+        },
+        "platform_ids": {
+            "items": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "type": [
+                "null",
+                "array"
+            ]
+        },
+        "publish_id": {
+            "type": [
+                "null",
+                "string"
+            ]
+        },
+        "title": {
+            "type": [
+                "null",
+                "string"
+            ]
+        },
+        "logo": {
+            "type": [
+                "null",
+                "string"
+            ]
+        },
+        "sections": {
+            "type": [
+                "null",
+                "array"
+            ],
+            "items": {
+                "type": [
+                    "null",
+                    "object"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": [
+                            "null",
+                            "string"
+                        ]
+                    },
+                    "created_at": {
+                        "type": [
+                            "null",
+                            "integer"
+                        ]
+                    },
+                    "title": {
+                        "type": [
+                            "null",
+                            "string"
+                        ]
+                    },
+                    "image": {
+                        "type": [
+                            "null",
+                            "string"
+                        ]
+                    },
+                    "icon": {
+                        "type": [
+                            "null",
+                            "string"
+                        ]
+                    },
+                    "app_id": {
+                        "type": [
+                            "null",
+                            "string"
+                        ]
+                    },
+                    "faq_ids": {
+                        "items": {
+                            "type": [
+                                "null",
+                                "string"
+                            ]
+                        },
+                        "type": [
+                            "null",
+                            "array"
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}

@@ -73,6 +73,7 @@ class HelpshiftAPI:
 
         return resp.json()
 
+
     def paging_get(self, url, results_key, replication_key=None, **get_args):
         next_page = 1
         total_returned = 0
@@ -96,7 +97,7 @@ class HelpshiftAPI:
 
             data = self.get(GetType.BASIC, set_query_parameters(url, **get_args))
 
-            total_pages = data.get('total-pages')
+            total_pages = data.get('total-pages', 1)
 
             LOGGER.info('helpshift paging request', extra={
                 'total_size': data.get('total-hits'),
