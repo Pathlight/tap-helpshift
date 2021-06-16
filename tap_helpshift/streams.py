@@ -102,6 +102,18 @@ class Messages(Stream):
             yield(self.stream, record)
 
 
+class Apps(Stream):
+    name = 'apps'
+    url = 'apps'
+    replication_method = 'FULL_TABLE'
+    key_properties = ['id']
+    results_key = 'apps'
+
+    def sync(self, state):
+        for row in self.client.paging_get(self.url, self.results_key):
+            yield(self.stream, row)
+
+
 class Agents(Stream):
     name = 'agents'
     url = 'agents'
@@ -110,7 +122,6 @@ class Agents(Stream):
     results_key = 'profiles'
 
     def sync(self, state):
-
         for row in self.client.paging_get(self.url, self.results_key):
             yield(self.stream, row)
 
@@ -147,5 +158,6 @@ STREAMS = {
     'issues': Issues,
     'messages': Messages,
     'agents': Agents,
+    'apps': Apps,
     'issue_analytics': IssueAnalytics
 }
