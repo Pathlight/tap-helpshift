@@ -117,6 +117,18 @@
         "string"
       ],
       "format": "date-time"
+    },
+    "meta": {
+      "type": [
+        "null",
+        "object"
+      ]
+    },
+    "custom_fields": {
+      "type": [
+        "null",
+        "object"
+      ]
     }
   }
 }

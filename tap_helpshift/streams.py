@@ -71,12 +71,14 @@ class Issues(Stream):
 
         messages_stream = Messages(self.client)
 
-        for row in self.client.paging_get(
-                                          self.url,
-                                          self.results_key,
-                                          self.replication_key,
-                                          updated_since=curr_synced_thru
-        ):
+        records =  self.client.paging_get(
+            self.url,
+            self.results_key,
+            self.replication_key,
+            includes='["custom_fields", "meta"]',
+            updated_since=curr_synced_thru
+        )
+        for row in records:
             record = {k: self.transform_value(k, v) for (k, v) in row.items()}
             yield(self.stream, record)
 
