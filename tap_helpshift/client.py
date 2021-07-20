@@ -126,12 +126,23 @@ class HelpshiftAPI:
             'from': sync_thru,
             'timezone': 'UTC'
         }
+        includes_args = [
+            'human_ttfr',
+            'first_human_responder_id'
+        ]
 
         while True:
-            data = self.get(GetType.ANALYTICS, set_query_parameters(
+
+            url = set_query_parameters(
                 url,
                 **get_args
-            ))
+            )
+
+            # append includes args, requests doesnt support multiple
+            # GET args with the same name
+            url = url + "&" + "&".join(["includes=%s" % f for f in includes_args])
+
+            data = self.get(GetType.ANALYTICS, url)
             results = data.get('results')
 
             if not results or len(results) < self.MIN_RESULTS:
