@@ -124,7 +124,7 @@ class HelpshiftAPI:
         get_args = {
             'to': now,
             'from': sync_thru,
-            'timezone': 'UTC',
+            'timezone': 'UTC'
         }
         includes_args = [
             'human_ttfr',
