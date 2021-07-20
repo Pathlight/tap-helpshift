@@ -275,6 +275,18 @@
         "string"
       ]
     },
+    "first_human_responder_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "human_ttfr": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
     "avg_tter": {
       "type": [
         "null",

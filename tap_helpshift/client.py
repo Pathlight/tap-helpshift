@@ -124,7 +124,11 @@ class HelpshiftAPI:
         get_args = {
             'to': now,
             'from': sync_thru,
-            'timezone': 'UTC'
+            'timezone': 'UTC',
+            'includes': '\n'.join([
+                'human_ttfr',
+                'first_human_responder_id',
+            ])
         }
 
         while True:
