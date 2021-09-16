@@ -7,7 +7,7 @@ from singer.utils import strftime as singer_strftime
 LOGGER = singer.get_logger()
 
 SUB_STREAMS = {
-    'issues': ['messages']
+    'issues': ['messages', 'issue_analytics']
 }
 
 
@@ -31,9 +31,12 @@ class Stream():
     def __init__(self, client=None, start_date=None):
         self.client = client
         if start_date:
-            self.start_date = start_date
+            self.start_date_int = start_date
+            self.start_date = datetime.datetime.fromtimestamp(start_date / 1000)
         else:
-            self.start_date = datetime.datetime.min.strftime('%Y-%m-%d')
+            # No need to go further back than 2011, the year Helpshift was founded.
+            self.start_date = datetime.datetime(2011, 1, 1)
+            self.start_date_int = int(self.start_date.strftime('%s')) * 1000
 
     def is_selected(self):
         return self.stream is not None
@@ -65,11 +68,12 @@ class Issues(Stream):
         try:
             sync_thru = singer.get_bookmark(state, self.name, self.replication_key)
         except TypeError:
-            sync_thru = self.start_date
+            sync_thru = self.start_date_int
 
-        curr_synced_thru = max(sync_thru, self.start_date)
+        curr_synced_thru = max(sync_thru, self.start_date_int)
 
         messages_stream = Messages(self.client)
+        analytics_stream = IssueAnalytics(self.client)
 
         records =  self.client.paging_get(
             self.url,
@@ -84,6 +88,9 @@ class Issues(Stream):
 
             if messages_stream.is_selected() and row.get('messages'):
                 yield from messages_stream.sync(row)
+
+            if analytics_stream.is_selected():
+                yield from analytics_stream.sync(row)
 
             curr_synced_thru = max(curr_synced_thru, row[self.replication_key])
 
@@ -131,29 +138,18 @@ class Agents(Stream):
 class IssueAnalytics(Stream):
     name = 'issue_analytics'
     url = 'analytics/issue'
-    key_properites = ['row_id']
+    key_properties = ['row_id']
     replication_method = 'INCREMENTAL'
     replication_key = 'updated_at'
 
-    def sync(self, state):
-        try:
-            sync_thru = singer.get_bookmark(state, self.name, self.replication_key)
-        except TypeError:
-            sync_thru = self.start_date
-
-        sync_thru = iso_format(sync_thru)
-        curr_synced_thru = max(sync_thru, iso_format(self.start_date))
-
+    def sync(self, issue):
+        created_at = datetime.datetime.fromtimestamp(issue['created_at'] / 1000)
         for row in self.client.analytics_paging_get(
             self.url,
-            sync_thru=curr_synced_thru
+            from_=created_at,
+            issue_id=issue['id']
         ):
-            yield(self.stream, row)
-
-            curr_synced_thru = max(curr_synced_thru, row[self.replication_key])
-
-        if curr_synced_thru > sync_thru:
-            singer.write_bookmark(state, self.name, self.replication_key, curr_synced_thru)
+            yield (self.stream, row)
 
 
 STREAMS = {
