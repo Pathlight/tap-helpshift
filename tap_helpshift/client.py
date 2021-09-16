@@ -139,6 +139,7 @@ class HelpshiftAPI:
                 'from': from_.strftime(date_fmt),
                 'to': to.strftime(date_fmt),
                 'timezone': 'UTC',
+                'limit': 2000,
             }
             if issue_id:
                 get_args['id'] = issue_id
