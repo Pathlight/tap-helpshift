@@ -167,7 +167,7 @@ class HelpshiftAPI:
                 })
 
                 for record in data['results']:
-                    total_returned += 2
+                    total_returned += 1
                     yield record
 
                 if not results or len(results) < self.MIN_RESULTS:
