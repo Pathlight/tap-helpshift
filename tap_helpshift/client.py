@@ -116,49 +116,66 @@ class HelpshiftAPI:
 
             next_page = next_page + 1 if next_page < total_pages else None
 
-    def analytics_paging_get(self, url, sync_thru):
-
+    def analytics_paging_get(self, url, from_, issue_id=None):
         now = singer.utils.now()
-        now = datetime.datetime.strftime(now, '%Y-%m-%dT%H:%M:%S')
+        # Timezone info needs to match `now` so we can compare without error.
+        from_ = from_.replace(tzinfo=now.tzinfo)
+
+        # Querying for a span of >180 days fails with a 400
+        max_timedelta = datetime.timedelta(days=180)
+        periods = []
+        while now - from_ > max_timedelta:
+            next_from = from_ + max_timedelta
+            periods.append((from_, next_from))
+            from_ = next_from
+        if from_ < now:
+            periods.append((from_, now))
+
         total_returned = 0
-        get_args = {
-            'to': now,
-            'from': sync_thru,
-            'timezone': 'UTC'
-        }
-        includes_args = [
-            'human_ttfr',
-            'first_human_responder_id'
-        ]
 
-        while True:
+        date_fmt = '%Y-%m-%dT%H:%M:%S'
+        for from_, to in periods:
+            get_args = {
+                'from': from_.strftime(date_fmt),
+                'to': to.strftime(date_fmt),
+                'timezone': 'UTC',
+                'limit': 2000,
+            }
+            if issue_id:
+                get_args['id'] = issue_id
+            includes_args = [
+                'human_ttfr',
+                'first_human_responder_id'
+            ]
 
-            url = set_query_parameters(
-                url,
-                **get_args
-            )
+            while True:
 
-            # append includes args, requests doesnt support multiple
-            # GET args with the same name
-            url = url + "&" + "&".join(["includes=%s" % f for f in includes_args])
+                url = set_query_parameters(
+                    url,
+                    **get_args
+                )
 
-            data = self.get(GetType.ANALYTICS, url)
-            results = data.get('results')
+                # append includes args, requests doesnt support multiple
+                # GET args with the same name
+                url = url + "&" + "&".join(["includes=%s" % f for f in includes_args])
 
-            if not results or len(results) < self.MIN_RESULTS:
-                break
+                data = self.get(GetType.ANALYTICS, url)
+                results = data.get('results')
 
-            LOGGER.info('helpshift analytics paging request', extra={
-                'url': url,
-                'total_returned': total_returned
-            })
+                LOGGER.info('helpshift analytics paging request', extra={
+                    'url': url,
+                    'total_returned': total_returned
+                })
 
-            for record in data['results']:
-                total_returned += 1
-                yield record
+                for record in data['results']:
+                    total_returned += 1
+                    yield record
 
-            next_key = data.get('next_key')
-            if not next_key:
-                break
+                if not results or len(results) < self.MIN_RESULTS:
+                    break
 
-            get_args['next_key'] = next_key
+                next_key = data.get('next_key')
+                if not next_key:
+                    break
+
+                get_args['next_key'] = next_key
