@@ -1,8 +1,10 @@
+import concurrent.futures
 import datetime
 import pytz
-import singer
+import queue
 
 from singer.utils import strftime as singer_strftime
+import singer
 
 LOGGER = singer.get_logger()
 
@@ -28,7 +30,7 @@ class Stream():
     datetime_fields = None
     date_format = None
 
-    def __init__(self, client=None, start_date=None):
+    def __init__(self, client=None, start_date=None, executor=None, q=None):
         self.client = client
         if start_date:
             self.start_date_int = start_date
@@ -38,13 +40,16 @@ class Stream():
             self.start_date = datetime.datetime(2011, 1, 1)
             self.start_date_int = int(self.start_date.strftime('%s')) * 1000
 
+        self.executor = executor
+        self.q = q
+
     def is_selected(self):
         return self.stream is not None
 
     def update_bookmark(self, state, value):
         current_bookmark = singer.get_bookmark(state, self.name, self.replication_key)
         if value and value > current_bookmark:
-            singer.write_bookmark(state, self.name, self.replication_key, value)
+            self.q.put({'write_bookmark': (state, self.name, self.replication_key, value)})
 
     def transform_value(self, key, value):
         if key in self.datetime_fields and value:
@@ -82,17 +87,48 @@ class Issues(Stream):
             includes='["custom_fields", "meta"]',
             updated_since=curr_synced_thru
         )
-        for row in records:
-            record = {k: self.transform_value(k, v) for (k, v) in row.items()}
-            yield(self.stream, record)
 
+        q = queue.Queue()
+
+        def handle_row_thread(row, q):
             if messages_stream.is_selected() and row.get('messages'):
-                yield from messages_stream.sync(row)
+                for item in messages_stream.sync(row):
+                    q.put(item)
 
             if analytics_stream.is_selected():
-                yield from analytics_stream.sync(row)
+                for item in analytics_stream.sync(row):
+                    q.put(item)
 
+        def consume_q():
+            # Yield items from threads
+            while True:
+                try:
+                    yield q.get_nowait()
+                except queue.Empty:
+                    return
+
+        futures = []
+
+        def clean_futures():
+            for fut in futures:
+                if fut.done():
+                    futures.remove(fut)
+
+        for row in records:
+            clean_futures()
+            yield from consume_q()
+
+            record = {k: self.transform_value(k, v) for (k, v) in row.items()}
+            yield(self.stream, record)
             curr_synced_thru = max(curr_synced_thru, row[self.replication_key])
+
+            futures.append(self.executor.submit(handle_row_thread, row, q))
+
+        for fut in concurrent.futures.as_completed(futures):
+            yield from consume_q()
+            exc = fut.exception()
+            if exc:
+                raise exc
 
         self.update_bookmark(state, curr_synced_thru)
 

@@ -4,6 +4,7 @@ import requests
 import singer
 import time
 import urllib
+import random
 
 
 LOGGER = singer.get_logger()
@@ -51,6 +52,12 @@ class HelpshiftAPI:
             elif get_type == GetType.ANALYTICS:
                 url = f'{self.analytics_base_url}/{url}'
 
+        def wait_to_retry():
+            # Add up to 10% fuzz so the client naturally spreads out requests
+            # on different threads.
+            fuzz = self.WAIT_TO_RETRY * .1 * random.random()
+            time.sleep(self.WAIT_TO_RETRY + fuzz)
+
         for num_retries in range(self.MAX_RETRIES):
             LOGGER.info(f'helpshift get request {url}')
             resp = requests.get(url, auth=self.auth, params=params)
@@ -59,12 +66,12 @@ class HelpshiftAPI:
             except requests.exceptions.RequestException:
                 if resp.status_code == 429 and num_retries < self.MAX_RETRIES:
                     LOGGER.info(f'api query helpshift rate limit {resp.text}')
-                    time.sleep(self.WAIT_TO_RETRY)
+                    wait_to_retry()
                 elif resp.status_code >= 500 and num_retries < self.MAX_RETRIES:
                     LOGGER.info(f'api query helpshift 5xx error {resp.status_code} - {resp.text}', extra={
                         'url': url
                     })
-                    time.sleep(self.WAIT_TO_RETRY)
+                    wait_to_retry()
                 else:
                     raise Exception(f'helpshift query error: {resp.status_code} - {resp.text}')
 

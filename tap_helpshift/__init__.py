@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-import os
+import concurrent.futures
 import json
+import os
+import queue
 import singer
+
 from singer import utils, metadata
 from singer.catalog import Catalog, CatalogEntry
 from singer.schema import Schema
@@ -82,45 +85,93 @@ def do_sync(client, catalog, state, config):
     populate_class_schemas(catalog, selected_stream_names)
     all_sub_stream_names = get_sub_stream_names()
 
-    for stream in catalog.streams:
-        stream_name = stream.tap_stream_id
-        if stream_name not in selected_stream_names:
-            LOGGER.info("%s: Skipping - not selected", stream_name)
-            continue
+    q = queue.Queue()
 
-        sub_stream_names = SUB_STREAMS.get(stream_name)
+    def writer_thread(q):
+        LOGGER.info(f'hello from writer_thread')
+        while True:
+            try:
+                resp = q.get()
+                if resp is None:
+                    return
 
-        # parent stream will sync sub stream
-        if stream_name in all_sub_stream_names:
-            continue
+                write_state = resp.get('write_state')
+                write_bookmark = resp.get('write_bookmark')
+                write_record = resp.get('write_record')
 
-        singer.write_schema(
-            stream_name,
-            stream.schema.to_dict(),
-            stream.key_properties
-        )
+                if write_state:
+                    singer.write_state(*write_state)
 
-        if sub_stream_names:
-            for sub_stream_name in sub_stream_names:
-                if sub_stream_name not in selected_stream_names:
-                    continue
-                sub_instance = STREAMS[sub_stream_name]
-                sub_stream = STREAMS[sub_stream_name].stream
-                sub_stream_schema = sub_stream.schema.to_dict()
-                singer.write_schema(
-                    sub_stream.tap_stream_id,
-                    sub_stream_schema,
-                    sub_instance.key_properties
-                )
+                if write_record:
+                    singer.write_record(*write_record)
 
+                if write_bookmark:
+                    singer.write_bookmark(*bookmark)
+            except:
+                LOGGER.exception('Writer thread had an exception')
+
+    def sync_stream_thread(stream_name, client, start_date, config, executor, q):
         LOGGER.info("%s: Starting sync", stream_name)
-        instance = STREAMS[stream_name](client, start_date)
-        counter_value = sync_stream(state, start_date, instance, config)
-        singer.write_state(state)
+        instance = STREAMS[stream_name](client, start_date, executor, q)
+        counter_value = sync_stream(state, start_date, instance, config, q)
+        q.put({'state': state})
         LOGGER.info("%s: Completed sync (%s rows)", stream_name, counter_value)
 
-    singer.write_state(state)
-    LOGGER.info("Finished sync")
+    futures = []
+
+    # Add one to concurrency for the writer thread.
+    concurrency = config.get('concurrency', 10) + 1
+    with concurrent.futures.ThreadPoolExecutor(concurrency) as executor:
+        for stream in catalog.streams:
+            stream_name = stream.tap_stream_id
+            if stream_name not in selected_stream_names:
+                LOGGER.info("%s: Skipping - not selected", stream_name)
+                continue
+
+            sub_stream_names = SUB_STREAMS.get(stream_name)
+
+            # parent stream will sync sub stream
+            if stream_name in all_sub_stream_names:
+                continue
+
+            singer.write_schema(
+                stream_name,
+                stream.schema.to_dict(),
+                stream.key_properties
+            )
+
+            if sub_stream_names:
+                for sub_stream_name in sub_stream_names:
+                    if sub_stream_name not in selected_stream_names:
+                        continue
+                    sub_instance = STREAMS[sub_stream_name]
+                    sub_stream = STREAMS[sub_stream_name].stream
+                    sub_stream_schema = sub_stream.schema.to_dict()
+                    singer.write_schema(
+                        sub_stream.tap_stream_id,
+                        sub_stream_schema,
+                        sub_instance.key_properties
+                    )
+
+            fut = executor.submit(sync_stream_thread, stream_name, client, start_date, config, executor, q)
+            futures.append(fut)
+
+        # Start the writer thread.
+        writer_fut = executor.submit(writer_thread, q)
+
+        for fut in concurrent.futures.as_completed(futures):
+            exc = fut.exception()
+            if exc:
+                raise exc
+
+        q.put({'write_state': (state,)})
+        # Tell the writer thread to shut down.
+        q.put(None)
+        # Wait for the writer to be complete.
+        writer_fut.result()
+
+        singer.write_state(state)
+        LOGGER.info("Finished sync")
 
 
 def discover():
