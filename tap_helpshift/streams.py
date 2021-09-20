@@ -77,7 +77,7 @@ class Issues(Stream):
 
     def sync(self, state):
         try:
-            sync_thru = singer.get_bookmark(state, self.name, self.replication_key)
+            sync_thru = singer.get_bookmark(state, self.name, self.replication_key) or self.start_date_int
         except TypeError:
             sync_thru = self.start_date_int
 
@@ -180,7 +180,7 @@ class IssueAnalytics(Stream):
             issue_id = issue['id']
         else:
             try:
-                sync_thru = singer.get_bookmark(state, self.name, self.replication_key)
+                sync_thru = singer.get_bookmark(state, self.name, self.replication_key) or self.start_date
             except TypeError:
                 sync_thru = self.start_date
 
