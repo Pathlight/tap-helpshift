@@ -22,7 +22,9 @@ def set_query_parameters(url, **params):
     new_query_string = ''
 
     for param_name, param_value in params.items():
-        query_params[param_name] = [param_value]
+        if not isinstance(param_value, (list, tuple, set)):
+            param_value = [param_value]
+        query_params[param_name] = param_value
         new_query_string = urllib.parse.urlencode(query_params, doseq=True)
 
     return urllib.parse.urlunsplit((scheme, netloc, path, new_query_string, fragment))
@@ -149,24 +151,19 @@ class HelpshiftAPI:
                 'to': to.strftime(date_fmt),
                 'timezone': 'UTC',
                 'limit': 2000,
+                'includes': [
+                    'human_ttfr',
+                    'first_human_responder_id'
+                ]
             }
             if issue_id:
                 get_args['id'] = issue_id
-            includes_args = [
-                'human_ttfr',
-                'first_human_responder_id'
-            ]
 
             while True:
-
                 url = set_query_parameters(
                     url,
                     **get_args
                 )
-
-                # append includes args, requests doesnt support multiple
-                # GET args with the same name
-                url = url + "&" + "&".join(["includes=%s" % f for f in includes_args])
 
                 data = self.get(GetType.ANALYTICS, url)
                 results = data.get('results')
