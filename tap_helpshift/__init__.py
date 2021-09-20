@@ -12,6 +12,7 @@ from singer.schema import Schema
 from tap_helpshift.client import HelpshiftAPI
 from tap_helpshift.streams import STREAMS, SUB_STREAMS
 from tap_helpshift.sync import sync_stream
+from tap_helpshift.util import consume_q
 
 
 REQUIRED_CONFIG_KEYS = ["start_date", "api_key", "subdomain"]
@@ -77,6 +78,41 @@ def populate_class_schemas(catalog, selected_stream_names):
             STREAMS[stream.tap_stream_id].stream = stream
 
 
+def writer_thread(writer_q):
+    LOGGER.info(f'hello from writer_thread')
+    while True:
+        try:
+            resp = writer_q.get()
+            if resp is None:
+                return
+
+            write_state = resp.get('write_state')
+            write_bookmark = resp.get('write_bookmark')
+            write_record = resp.get('write_record')
+
+            if write_state:
+                singer.write_state(*write_state)
+
+            if write_record:
+                singer.write_record(*write_record)
+
+            if write_bookmark:
+                singer.write_bookmark(*write_bookmark)
+        except:
+            LOGGER.exception('Writer thread had an exception')
+
+
+def sync_stream_thread(state, stream_name, client, start_date, config, executor, writer_q, task_q, *args):
+    try:
+        LOGGER.info("%s: Starting sync", stream_name)
+        instance = STREAMS[stream_name](client, start_date, executor, writer_q, task_q)
+        counter_value = sync_stream(state, start_date, instance, config, writer_q, *args)
+        writer_q.put({'state': state})
+        LOGGER.info("%s: Completed sync (%s rows)", stream_name, counter_value)
+    except:
+        LOGGER.exception('Exception syncing stream %s', stream_name)
+
+
 def do_sync(client, catalog, state, config):
     start_date = config['start_date']
 
@@ -85,40 +121,10 @@ def do_sync(client, catalog, state, config):
     populate_class_schemas(catalog, selected_stream_names)
     all_sub_stream_names = get_sub_stream_names()
 
-    q = queue.Queue()
-
-    def writer_thread(q):
-        LOGGER.info(f'hello from writer_thread')
-        while True:
-            try:
-                resp = q.get()
-                if resp is None:
-                    return
-
-                write_state = resp.get('write_state')
-                write_bookmark = resp.get('write_bookmark')
-                write_record = resp.get('write_record')
-
-                if write_state:
-                    singer.write_state(*write_state)
-
-                if write_record:
-                    singer.write_record(*write_record)
-
-                if write_bookmark:
-                    singer.write_bookmark(*write_bookmark)
-            except:
-                LOGGER.exception('Writer thread had an exception')
-
-    def sync_stream_thread(stream_name, client, start_date, config, executor, q):
-        LOGGER.info("%s: Starting sync", stream_name)
-        instance = STREAMS[stream_name](client, start_date, executor, q)
-        counter_value = sync_stream(state, start_date, instance, config, q)
-        q.put({'state': state})
-        LOGGER.info("%s: Completed sync (%s rows)", stream_name, counter_value)
+    writer_q = queue.Queue()
+    task_q = queue.Queue()
 
     futures = []
-
     # Add one to concurrency for the writer thread.
     concurrency = config.get('concurrency', 10) + 1
     with concurrent.futures.ThreadPoolExecutor(concurrency) as executor:
@@ -153,20 +159,31 @@ def do_sync(client, catalog, state, config):
                         sub_instance.key_properties
                     )
 
-            fut = executor.submit(sync_stream_thread, stream_name, client, start_date, config, executor, q)
+            fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, executor, writer_q, task_q)
             futures.append(fut)
 
         # Start the writer thread.
-        writer_fut = executor.submit(writer_thread, q)
+        writer_fut = executor.submit(writer_thread, writer_q)
 
-        for fut in concurrent.futures.as_completed(futures):
-            exc = fut.exception()
-            if exc:
-                raise exc
+        while True:
+            for task in consume_q(task_q):
+                stream_name, *args = task
+                fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, executor, writer_q, task_q, *args)
+                futures.append(fut)
 
-        q.put({'write_state': (state,)})
+            if not futures:
+                break
+
+            try:
+                for fut in concurrent.futures.as_completed(list(futures), timeout=10):
+                    fut.result(timeout=.1)
+                    futures.remove(done)
+            except concurrent.futures.TimeoutError:
+                pass
+
+        writer_q.put({'write_state': (state,)})
         # Tell the writer thread to shut down.
-        q.put(None)
+        writer_q.put(None)
         # Wait for the writer to be complete.
         writer_fut.result()
 

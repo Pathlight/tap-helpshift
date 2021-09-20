@@ -56,7 +56,9 @@ class HelpshiftAPI:
             # Add up to 10% fuzz so the client naturally spreads out requests
             # on different threads.
             fuzz = self.WAIT_TO_RETRY * .1 * random.random()
-            time.sleep(self.WAIT_TO_RETRY + fuzz)
+            wait_s = self.WAIT_TO_RETRY + fuzz
+            LOGGER.info('Waiting %r(s) to make a new request', wait_s)
+            time.sleep(wait_s)
 
         for num_retries in range(self.MAX_RETRIES):
             LOGGER.info(f'helpshift get request {url}')

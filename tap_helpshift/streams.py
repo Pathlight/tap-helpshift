@@ -1,24 +1,29 @@
 import concurrent.futures
 import datetime
+import numbers
 import pytz
 import queue
 
 from singer.utils import strftime as singer_strftime
 import singer
 
+from .util import consume_q
+
 LOGGER = singer.get_logger()
 
 SUB_STREAMS = {
-    'issues': ['messages', 'issue_analytics']
+    'issues': ['messages']
 }
+
+ISO_FORMAT = '%Y-%m-%dT%H:%M:%S'
 
 
 def iso_format(date_value):
     if isinstance(date_value, str):
         return date_value
-    value = datetime.datetime.utcfromtimestamp(date_value/1000.0)
-    value = datetime.datetime.strftime(value, '%Y-%m-%dT%H:%M:%S')
-    return value
+    if isinstance(date_value, numbers.Number):
+        date_value = datetime.datetime.utcfromtimestamp(date_value/1000.0)
+    return datetime.datetime.strftime(date_value, ISO_FORMAT)
 
 
 class Stream():
@@ -30,7 +35,7 @@ class Stream():
     datetime_fields = None
     date_format = None
 
-    def __init__(self, client=None, start_date=None, executor=None, q=None):
+    def __init__(self, client=None, start_date=None, executor=None, writer_q=None, task_q=None):
         self.client = client
         if start_date:
             self.start_date_int = start_date
@@ -41,7 +46,8 @@ class Stream():
             self.start_date_int = int(self.start_date.strftime('%s')) * 1000
 
         self.executor = executor
-        self.q = q
+        self.writer_q = writer_q
+        self.task_q = task_q
 
     def is_selected(self):
         return self.stream is not None
@@ -49,7 +55,7 @@ class Stream():
     def update_bookmark(self, state, value):
         current_bookmark = singer.get_bookmark(state, self.name, self.replication_key)
         if value and value > current_bookmark:
-            self.q.put({'write_bookmark': (state, self.name, self.replication_key, value)})
+            self.writer_q.put({'write_bookmark': (state, self.name, self.replication_key, value)})
 
     def transform_value(self, key, value):
         if key in self.datetime_fields and value:
@@ -88,47 +94,16 @@ class Issues(Stream):
             updated_since=curr_synced_thru
         )
 
-        q = queue.Queue()
-
-        def handle_row_thread(row, q):
-            if messages_stream.is_selected() and row.get('messages'):
-                for item in messages_stream.sync(row):
-                    q.put(item)
-
-            if analytics_stream.is_selected():
-                for item in analytics_stream.sync(row):
-                    q.put(item)
-
-        def consume_q():
-            # Yield items from threads
-            while True:
-                try:
-                    yield q.get_nowait()
-                except queue.Empty:
-                    return
-
-        futures = []
-
-        def clean_futures():
-            for fut in futures:
-                if fut.done():
-                    futures.remove(fut)
-
         for row in records:
-            clean_futures()
-            yield from consume_q()
-
             record = {k: self.transform_value(k, v) for (k, v) in row.items()}
             yield(self.stream, record)
             curr_synced_thru = max(curr_synced_thru, row[self.replication_key])
 
-            futures.append(self.executor.submit(handle_row_thread, row, q))
+            if messages_stream.is_selected() and row.get('messages'):
+                yield from messages_stream.sync(row)
 
-        for fut in concurrent.futures.as_completed(futures):
-            yield from consume_q()
-            exc = fut.exception()
-            if exc:
-                raise exc
+            if analytics_stream.is_selected():
+                self.task_q.put((analytics_stream.stream.tap_stream_id, row))
 
         self.update_bookmark(state, curr_synced_thru)
 
@@ -179,6 +154,49 @@ class IssueAnalytics(Stream):
     replication_key = 'updated_at'
 
     def sync(self, issue):
+        created_at = datetime.datetime.fromtimestamp(issue['created_at'] / 1000)
+        for row in self.client.analytics_paging_get(
+            self.url,
+            from_=created_at,
+            issue_id=issue['id']
+        ):
+            yield (self.stream, row)
+
+
+class IssueAnalytics(Stream):
+    name = 'issue_analytics'
+    url = 'analytics/issue'
+    key_properites = ['row_id']
+    replication_method = 'INCREMENTAL'
+    replication_key = 'updated_at'
+
+    def sync(self, state, issue=None):
+        issue_id = None
+        curr_synced_thru = None
+
+        if issue:
+            LOGGER.info('Syncing analytics for issue %r', issue['id'])
+            from_ = datetime.datetime.fromtimestamp(issue['created_at'] / 1000)
+            issue_id = issue['id']
+        else:
+            try:
+                sync_thru = singer.get_bookmark(state, self.name, self.replication_key)
+            except TypeError:
+                sync_thru = self.start_date
+
+            sync_thru = iso_format(sync_thru)
+            curr_synced_thru = max(sync_thru, iso_format(self.start_date))
+            from_ = datetime.datetime.strptime(curr_synced_thru, ISO_FORMAT)
+
+        for row in self.client.analytics_paging_get(self.url, from_=from_, issue_id=issue_id):
+            yield(self.stream, row)
+            if not issue:
+                curr_synced_thru = max(curr_synced_thru, row[self.replication_key])
+
+        if not issue and curr_synced_thru > sync_thru:
+            self.write_bookmark(state, curr_synced_thru)
+
+    def sync_for_issue(self, issue):
         created_at = datetime.datetime.fromtimestamp(issue['created_at'] / 1000)
         for row in self.client.analytics_paging_get(
             self.url,
