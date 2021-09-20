@@ -106,7 +106,7 @@ def do_sync(client, catalog, state, config):
                     singer.write_record(*write_record)
 
                 if write_bookmark:
-                    singer.write_bookmark(*bookmark)
+                    singer.write_bookmark(*write_bookmark)
             except:
                 LOGGER.exception('Writer thread had an exception')
 
