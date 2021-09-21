@@ -173,7 +173,7 @@ def do_sync(client, catalog, state, config):
             # to for some time and run out of memory.
             while len(futures) < qsize:
                 task = next(to_consume, None)
-                not task:
+                if not task:
                     break
                 stream_name, *args = task
                 fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, executor, writer_q, task_q, *args)
