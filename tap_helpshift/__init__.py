@@ -121,8 +121,9 @@ def do_sync(client, catalog, state, config):
     populate_class_schemas(catalog, selected_stream_names)
     all_sub_stream_names = get_sub_stream_names()
 
-    writer_q = queue.Queue()
-    task_q = queue.Queue()
+    qsize = config.get('qsize', 100)
+    writer_q = queue.Queue(maxsize=qsize)
+    task_q = queue.Queue(maxsize=qsize)
 
     futures = []
     # Add one to concurrency for the writer thread.
@@ -166,7 +167,14 @@ def do_sync(client, catalog, state, config):
         writer_fut = executor.submit(writer_thread, writer_q)
 
         while True:
-            for task in consume_q(task_q):
+            to_consume = consume_q(task_q)
+            # Don't let the list of futures we're waiting on exceed
+            # qsize. Otherwise, we may submit too many tasks we won't get
+            # to for some time and run out of memory.
+            while len(futures) < qsize:
+                task = next(to_consume, None)
+                not task:
+                    break
                 stream_name, *args = task
                 fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, executor, writer_q, task_q, *args)
                 futures.append(fut)
