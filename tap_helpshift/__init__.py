@@ -179,6 +179,7 @@ def do_sync(client, catalog, state, config):
                 if not task:
                     break
                 stream_name, *args = task
+                LOGGER.info('Submitting task: %r', task)
                 fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, writer_q, task_q, *args)
                 futures.append(fut)
 
