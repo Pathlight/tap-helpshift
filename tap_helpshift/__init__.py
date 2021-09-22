@@ -124,7 +124,7 @@ def do_sync(client, catalog, state, config):
     populate_class_schemas(catalog, selected_stream_names)
     all_sub_stream_names = get_sub_stream_names()
 
-    qsize = config.get('qsize', 100)
+    qsize = config.get('qsize', 100_000)
     writer_q = queue.Queue(maxsize=qsize)
     task_q = queue.Queue(maxsize=qsize)
 
