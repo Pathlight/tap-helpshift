@@ -87,7 +87,6 @@ def writer_thread(writer_q):
                 return
 
             write_state = resp.get('write_state')
-            write_bookmark = resp.get('write_bookmark')
             write_record = resp.get('write_record')
 
             if write_state:
@@ -95,9 +94,6 @@ def writer_thread(writer_q):
 
             if write_record:
                 singer.write_record(*write_record)
-
-            if write_bookmark:
-                singer.write_bookmark(*write_bookmark)
         except:
             LOGGER.exception('Writer thread had an exception')
 

@@ -55,7 +55,7 @@ class Stream():
     def update_bookmark(self, state, value):
         current_bookmark = singer.get_bookmark(state, self.name, self.replication_key)
         if value and value > current_bookmark:
-            self.writer_q.put({'write_bookmark': (state, self.name, self.replication_key, value)})
+            singer.write_bookmark(state, self.name, self.replication_key, value)
 
     def transform_value(self, key, value):
         if key in self.datetime_fields and value:
@@ -97,7 +97,9 @@ class Issues(Stream):
         for row in records:
             record = {k: self.transform_value(k, v) for (k, v) in row.items()}
             yield(self.stream, record)
+
             curr_synced_thru = max(curr_synced_thru, row[self.replication_key])
+            self.update_bookmark(state, curr_synced_thru)
 
             if messages_stream.is_selected() and row.get('messages'):
                 yield from messages_stream.sync(row)
@@ -192,9 +194,7 @@ class IssueAnalytics(Stream):
             yield(self.stream, row)
             if not issue:
                 curr_synced_thru = max(curr_synced_thru, row[self.replication_key])
-
-        if not issue and curr_synced_thru > sync_thru:
-            self.write_bookmark(state, curr_synced_thru)
+                self.update_bookmark(state, curr_synced_thru)
 
     def sync_for_issue(self, issue):
         created_at = datetime.datetime.fromtimestamp(issue['created_at'] / 1000)
