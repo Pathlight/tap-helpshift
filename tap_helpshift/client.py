@@ -110,7 +110,7 @@ class HelpshiftAPI:
 
             total_pages = data.get('total-pages', 1)
 
-            LOGGER.info('helpshift paging request', extra={
+            LOGGER.info('helpshift paging request: %r', {
                 'total_size': data.get('total-hits'),
                 'total_pages': total_pages,
                 'page': next_page,
@@ -126,6 +126,12 @@ class HelpshiftAPI:
                 yield record
 
             next_page = next_page + 1 if next_page < total_pages else None
+
+        LOGGER.info('helpshift paging request complete: %r', {
+            'results_key': results_key,
+            'last_url': url,
+            'total_returned': total_returned
+        })
 
     def analytics_paging_get(self, url, from_, issue_id=None):
         now = singer.utils.now()

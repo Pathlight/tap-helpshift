@@ -35,7 +35,7 @@ class Stream():
     datetime_fields = None
     date_format = None
 
-    def __init__(self, client=None, start_date=None, executor=None, writer_q=None, task_q=None):
+    def __init__(self, client=None, start_date=None, writer_q=None, task_q=None):
         self.client = client
         if start_date:
             self.start_date_int = start_date
@@ -45,7 +45,6 @@ class Stream():
             self.start_date = datetime.datetime(2011, 1, 1)
             self.start_date_int = int(self.start_date.strftime('%s')) * 1000
 
-        self.executor = executor
         self.writer_q = writer_q
         self.task_q = task_q
 

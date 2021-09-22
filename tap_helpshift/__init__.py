@@ -105,12 +105,12 @@ def writer_thread(writer_q):
             LOGGER.exception('Writer thread had an exception')
 
 
-def sync_stream_thread(state, stream_name, client, start_date, config, executor, writer_q, task_q, *args):
+def sync_stream_thread(state, stream_name, client, start_date, config, writer_q, task_q, *args):
     try:
-        LOGGER.info("%s: Starting sync", stream_name)
-        instance = STREAMS[stream_name](client, start_date, executor, writer_q, task_q)
+        LOGGER.info("%s: Starting sync with args %r", stream_name, args)
+        instance = STREAMS[stream_name](client, start_date, writer_q, task_q)
         counter_value = sync_stream(state, start_date, instance, config, writer_q, *args)
-        writer_q.put({'state': state})
+        writer_q.put({'write_state': (state,)})
         LOGGER.info("%s: Completed sync (%s rows)", stream_name, counter_value)
     except:
         LOGGER.exception('Exception syncing stream %s', stream_name)
@@ -163,7 +163,7 @@ def do_sync(client, catalog, state, config):
                         sub_instance.key_properties
                     )
 
-            fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, executor, writer_q, task_q)
+            fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, writer_q, task_q)
             futures.append(fut)
 
         # Start the writer thread.
@@ -179,14 +179,14 @@ def do_sync(client, catalog, state, config):
                 if not task:
                     break
                 stream_name, *args = task
-                fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, executor, writer_q, task_q, *args)
+                fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, writer_q, task_q, *args)
                 futures.append(fut)
 
             if futures:
                 try:
                     for fut in concurrent.futures.as_completed(list(futures), timeout=10):
                         fut.result(timeout=.1)
-                        futures.remove(done)
+                        futures.remove(fut)
                 except concurrent.futures.TimeoutError:
                     pass
                 writer_q.put({'write_state': (state,)})
