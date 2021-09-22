@@ -22,7 +22,7 @@ def sync_stream(state, start_date, instance, config, writer_q, *args):
 
     parent_stream = stream
     with metrics.record_counter(stream.tap_stream_id) as counter:
-        for idx, (stream, record) in enumerate(instance.sync(state, *args)):
+        for (stream, record) in instance.sync(state, *args):
             # NB: Only count parent records in the case of sub-streams
             if stream.tap_stream_id == parent_stream.tap_stream_id:
                 counter.increment()
@@ -30,14 +30,5 @@ def sync_stream(state, start_date, instance, config, writer_q, *args):
             with singer.Transformer() as transformer:
                 rec = transformer.transform(record, stream.schema.to_dict(), metadata=metadata.to_map(mdata))
             writer_q.put({'write_record': (stream.tap_stream_id, rec)})
-
-            if instance.replication_method == "INCREMENTAL" and (idx + 1) % 100 == 0:
-                # Note: Not sure if strict record order is guaranteed, but
-                # need failed syncs to save some of their work as they go,
-                # so trying this out.
-                # PH
-                writer_q.put({'write_state': (state,)})
-
-            writer_q.put({'write_state': (state,)})
 
         return counter.value

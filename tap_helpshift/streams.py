@@ -54,7 +54,7 @@ class Stream():
 
     def update_bookmark(self, state, value):
         current_bookmark = singer.get_bookmark(state, self.name, self.replication_key)
-        if value and value > current_bookmark:
+        if value and iso_format(value) > iso_format(current_bookmark):
             singer.write_bookmark(state, self.name, self.replication_key, value)
 
     def transform_value(self, key, value):

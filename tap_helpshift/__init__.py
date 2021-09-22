@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import concurrent.futures
+import copy
 import json
 import os
 import queue
@@ -79,6 +80,8 @@ def populate_class_schemas(catalog, selected_stream_names):
 
 
 def writer_thread(writer_q):
+    prev_state = None
+
     LOGGER.info(f'hello from writer_thread')
     while True:
         try:
@@ -90,7 +93,11 @@ def writer_thread(writer_q):
             write_record = resp.get('write_record')
 
             if write_state:
-                singer.write_state(*write_state)
+                state, *args = write_state
+                # Only write state if it has changed.
+                if prev_state != state:
+                    prev_state = copy.deepcopy(state)
+                    singer.write_state(*write_state)
 
             if write_record:
                 singer.write_record(*write_record)
@@ -123,7 +130,7 @@ def do_sync(client, catalog, state, config):
 
     futures = []
     # Add one to concurrency for the writer thread.
-    concurrency = config.get('concurrency', 10) + 1
+    concurrency = config.get('concurrency', None)
     with concurrent.futures.ThreadPoolExecutor(concurrency) as executor:
         for stream in catalog.streams:
             stream_name = stream.tap_stream_id
@@ -175,15 +182,16 @@ def do_sync(client, catalog, state, config):
                 fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, executor, writer_q, task_q, *args)
                 futures.append(fut)
 
-            if not futures:
+            if futures:
+                try:
+                    for fut in concurrent.futures.as_completed(list(futures), timeout=10):
+                        fut.result(timeout=.1)
+                        futures.remove(done)
+                except concurrent.futures.TimeoutError:
+                    pass
+                writer_q.put({'write_state': (state,)})
+            else:
                 break
-
-            try:
-                for fut in concurrent.futures.as_completed(list(futures), timeout=10):
-                    fut.result(timeout=.1)
-                    futures.remove(done)
-            except concurrent.futures.TimeoutError:
-                pass
 
         writer_q.put({'write_state': (state,)})
         # Tell the writer thread to shut down.
