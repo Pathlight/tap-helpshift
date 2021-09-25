@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-import concurrent.futures
+from collections import defaultdict
+import asyncio
 import copy
 import json
 import os
 import queue
-import singer
+import threading
+import time
 
 from singer import utils, metadata
 from singer.catalog import Catalog, CatalogEntry
 from singer.schema import Schema
+import aiohttp
+import singer
+import singer.metrics as metrics
 
 from tap_helpshift.client import HelpshiftAPI
 from tap_helpshift.streams import STREAMS, SUB_STREAMS
@@ -79,80 +84,49 @@ def populate_class_schemas(catalog, selected_stream_names):
             STREAMS[stream.tap_stream_id].stream = stream
 
 
-def writer_thread(writer_q):
-    prev_state = None
+class SyncApplication:
+    def __init__(self, client, catalog, config):
+        self.client = client
+        self.catalog = catalog
 
-    LOGGER.info(f'hello from writer_thread')
-    while True:
-        try:
-            resp = writer_q.get()
-            if resp is None:
-                return
+        self.start_date = config['start_date']
 
-            write_state = resp.get('write_state')
-            write_record = resp.get('write_record')
+        self.selected_stream_names = get_selected_streams(catalog)
+        validate_dependencies(self.selected_stream_names)
+        populate_class_schemas(catalog, self.selected_stream_names)
+        all_sub_stream_names = get_sub_stream_names()
 
-            if write_state:
-                state, *args = write_state
-                # Only write state if it has changed.
-                if prev_state != state:
-                    prev_state = copy.deepcopy(state)
-                    singer.write_state(*write_state)
-
-            if write_record:
-                singer.write_record(*write_record)
-        except:
-            LOGGER.exception('Writer thread had an exception')
-
-
-def sync_stream_thread(state, stream_name, client, start_date, config, writer_q, task_q, *args):
-    try:
-        LOGGER.info("%s: Starting sync", stream_name)
-        instance = STREAMS[stream_name](client, start_date, writer_q, task_q)
-        counter_value = sync_stream(state, start_date, instance, config, writer_q, *args)
-        writer_q.put({'write_state': (state,)})
-        LOGGER.info("%s: Completed sync (%s rows)", stream_name, counter_value)
-    except:
-        LOGGER.exception('Exception syncing stream %s', stream_name)
-
-
-def do_sync(client, catalog, state, config):
-    start_date = config['start_date']
-
-    selected_stream_names = get_selected_streams(catalog)
-    validate_dependencies(selected_stream_names)
-    populate_class_schemas(catalog, selected_stream_names)
-    all_sub_stream_names = get_sub_stream_names()
-
-    qsize = config.get('qsize', 100_000)
-    writer_q = queue.Queue(maxsize=qsize)
-    task_q = queue.Queue(maxsize=qsize)
-
-    futures = []
-    # Add one to concurrency for the writer thread.
-    concurrency = config.get('concurrency', None)
-    with concurrent.futures.ThreadPoolExecutor(concurrency) as executor:
+        self.selected_streams = []
+        # Output schemas and build selected streams
         for stream in catalog.streams:
             stream_name = stream.tap_stream_id
-            if stream_name not in selected_stream_names:
+            if stream_name not in self.selected_stream_names:
                 LOGGER.info("%s: Skipping - not selected", stream_name)
                 continue
-
-            sub_stream_names = SUB_STREAMS.get(stream_name)
 
             # parent stream will sync sub stream
             if stream_name in all_sub_stream_names:
                 continue
 
+            self.selected_streams.append(stream)
+
+        self.stream_name_by_task = {}
+        self.stream_schedule = defaultdict(int)
+        self.stream_counters = {}
+
+    def write_schemas(self):
+        for stream in self.selected_streams:
+            stream_name = stream.tap_stream_id
             singer.write_schema(
                 stream_name,
                 stream.schema.to_dict(),
                 stream.key_properties
             )
 
+            sub_stream_names = SUB_STREAMS.get(stream_name)
             if sub_stream_names:
                 for sub_stream_name in sub_stream_names:
-                    if sub_stream_name not in selected_stream_names:
+                    if sub_stream_name not in self.selected_stream_names:
                         continue
                     sub_instance = STREAMS[sub_stream_name]
                     sub_stream = STREAMS[sub_stream_name].stream
@@ -163,41 +137,57 @@ def do_sync(client, catalog, state, config):
                         sub_instance.key_properties
                     )
 
-            fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, writer_q, task_q)
-            futures.append(fut)
+    def sync_stream_bg(self, stream_name, state, *args, start_date=None):
+        start_date = start_date or self.start_date
 
-        # Start the writer thread.
-        writer_fut = executor.submit(writer_thread, writer_q)
+        if stream_name not in self.stream_counters:
+            self.stream_counters[stream_name] = metrics.record_counter(stream_name)
+        counter = self.stream_counters[stream_name]
+        instance = STREAMS[stream_name](self.client, start_date, sync_stream_bg=self.sync_stream_bg)
+        task = asyncio.create_task(sync_stream(state, instance, counter, start_date=start_date))
+        self.stream_name_by_task[task] = stream_name
 
-        while True:
-            to_consume = consume_q(task_q)
-            # Don't let the list of futures we're waiting on exceed
-            # qsize. Otherwise, we may submit too many tasks we won't get
-            # to for some time and run out of memory.
-            while len(futures) < qsize:
-                task = next(to_consume, None)
-                if not task:
-                    break
-                stream_name, *args = task
-                fut = executor.submit(sync_stream_thread, state, stream_name, client, start_date, config, writer_q, task_q, *args)
-                futures.append(fut)
+    def spawn_selected_streams(self, state):
+        now = time.monotonic()
+        for stream in self.selected_streams:
+            stream_name = stream.tap_stream_id
+            running_streams = set(self.stream_name_by_task.values())
+            if stream_name in running_streams:
+                continue
+            if now < self.stream_schedule[stream_name]:
+                continue
 
-            if futures:
-                try:
-                    for fut in concurrent.futures.as_completed(list(futures), timeout=10):
-                        fut.result(timeout=.1)
-                        futures.remove(fut)
-                except concurrent.futures.TimeoutError:
-                    pass
-                writer_q.put({'write_state': (state,)})
-            else:
-                break
+            self.sync_stream_bg(stream_name, state)
 
-        writer_q.put({'write_state': (state,)})
-        # Tell the writer thread to shut down.
-        writer_q.put(None)
-        # Wait for the writer to be complete.
-        writer_fut.result()
+    async def manage_tasks(self, timeout, stream_cooldown=300):
+        """
+        Returns True if there are running tasks, False otherwise.
+        """
+
+        try:
+            all_tasks = set(self.stream_name_by_task.keys()) | asyncio.all_tasks()
+            if not all_tasks:
+                # No tasks left to await, we're all done!
+                return False
+
+            for task in asyncio.as_completed(all_tasks, timeout=timeout):
+                await task
+                if task in self.stream_name_by_task:
+                    stream_name = self.stream_name_by_task.pop(task)
+                    self.stream_schedule[stream_name] = time.monotonic() + stream_cooldown
+        except asyncio.TimeoutError:
+            pass
+
+        # Live to loop another day
+        return True
+
+    async def run(self, state):
+        self.write_schemas()
+
+        running = True
+        while running:
+            self.spawn_selected_streams(state)
+            running = await self.manage_tasks(timeout=10)
 
         singer.write_state(state)
         LOGGER.info("Finished sync")
@@ -238,8 +228,7 @@ def discover():
     return Catalog(streams)
 
 
-@utils.handle_top_exception(LOGGER)
-def main():
+async def aiomain():
     # Parse command line arguments
     args = utils.parse_args(REQUIRED_CONFIG_KEYS)
 
@@ -253,8 +242,17 @@ def main():
             catalog = args.catalog
         else:
             catalog = discover()
-        client = HelpshiftAPI(args.config)
-        do_sync(client, catalog, args.state, args.config)
+
+        auth = aiohttp.BasicAuth(args.config['api_key'])
+        async with aiohttp.ClientSession(auth=auth) as session:
+            client = HelpshiftAPI(session, args.config)
+            app = SyncApplication(client, catalog, args.config)
+            await app.run(args.state)
+
+
+@utils.handle_top_exception(LOGGER)
+def main():
+    asyncio.run(aiomain())
 
 
 if __name__ == "__main__":

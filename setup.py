@@ -12,7 +12,7 @@ setup(
     install_requires=[
         # NB: Pin these to a more specific version for tap reliability
         "singer-python",
-        "requests",
+        "aiohttp",
     ],
     entry_points="""
     [console_scripts]

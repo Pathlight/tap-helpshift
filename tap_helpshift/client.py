@@ -1,10 +1,12 @@
+import asyncio
 import datetime
 import enum
-import requests
-import singer
+import random
 import time
 import urllib
-import random
+
+import aiohttp
+import singer
 
 
 LOGGER = singer.get_logger()
@@ -40,52 +42,63 @@ class HelpshiftAPI:
     WAIT_TO_RETRY = 60  # documentation doesn't include error handling
     MIN_RESULTS = 10
 
-    def __init__(self, config):
-        api_key = config['api_key']
+    def __init__(self, session, config, parallel_requests=1000):
+        self.running = asyncio.Event()
+        self.running.set()
+        self.req_semaphore = asyncio.BoundedSemaphore(parallel_requests)
+
+        self.session = session
         subdomain = config['subdomain']
-        self.auth = (api_key, '')
         self.base_url = 'https://api.helpshift.com/v1/{}'.format(subdomain)
         self.analytics_base_url = 'https://analytics.helpshift.com/v1/{}'.format(subdomain)
 
-    def get(self, get_type, url, params=None):
+    async def pause(seconds):
+        if self.running.is_set():
+            LOGGER.info('Pausing requests for %r seconds', seconds)
+            self.running.clear()
+            await asyncio.sleep(wait_s)
+            self.running.set()
+            LOGGER.info('Requests unpaused')
+
+    async def get(self, get_type, url, params=None):
         if not url.startswith('https://'):
             if get_type == GetType.BASIC:
                 url = f'{self.base_url}/{url}'
             elif get_type == GetType.ANALYTICS:
                 url = f'{self.analytics_base_url}/{url}'
 
-        def wait_to_retry():
-            # Add up to 10% fuzz so the client naturally spreads out requests
-            # on different threads.
-            fuzz = self.WAIT_TO_RETRY * .1 * random.random()
-            wait_s = self.WAIT_TO_RETRY + fuzz
-            LOGGER.info('Waiting %r(s) to make a new request', wait_s)
-            time.sleep(wait_s)
-
         for num_retries in range(self.MAX_RETRIES):
-            LOGGER.info(f'helpshift get request {url}')
-            resp = requests.get(url, auth=self.auth, params=params)
-            try:
-                resp.raise_for_status()
-            except requests.exceptions.RequestException:
-                if resp.status_code == 429 and num_retries < self.MAX_RETRIES:
-                    LOGGER.info(f'api query helpshift rate limit {resp.text}')
-                    wait_to_retry()
-                elif resp.status_code >= 500 and num_retries < self.MAX_RETRIES:
-                    LOGGER.info(f'api query helpshift 5xx error {resp.status_code} - {resp.text}', extra={
-                        'url': url
-                    })
-                    wait_to_retry()
-                else:
-                    raise Exception(f'helpshift query error: {resp.status_code} - {resp.text}')
+            rate_limited = False
+            async with self.req_semaphore:
+                await self.running.wait()
 
-            if resp and resp.status_code == 200:
-                break
+                LOGGER.info(f'helpshift get request {url}')
+                async with self.session.get(url, params=params) as resp:
+                    try:
+                        resp.raise_for_status()
+                        return await resp.json()
+                    except (aiohttp.ClientResponseError, aiohttp.ClientConnectionError):
+                        if resp.status == 429 and num_retries < self.MAX_RETRIES:
+                            rate_limit_msg = await resp.text()
+                            LOGGER.info(f'api query helpshift rate limit {rate_limit_msg}')
+                            rate_limited = True
+                        elif resp.status >= 500 and num_retries < self.MAX_RETRIES:
+                            error_msg = await resp.text()
+                            LOGGER.info(f'api query helpshift 5xx error {resp.status} - {error_msg}', extra={
+                                'url': url
+                            })
+                        else:
+                            error_msg = await resp.text()
+                            raise Exception(f'helpshift query error: {resp.status} - {error_msg}')
 
-        return resp.json()
+            if rate_limited:
+                # We're rate limited, make all requests wait
+                await self.pause()
+            else:
+                # This particular request had an error, so only it will wait
+                await asyncio.sleep(self.WAIT_TO_RETRY)
 
-
-    def paging_get(self, url, results_key, replication_key=None, **get_args):
+    async def paging_get(self, url, results_key, replication_key=None, **get_args):
         next_page = 1
         total_returned = 0
         max_synced = None
@@ -106,7 +119,7 @@ class HelpshiftAPI:
 
             get_args['page'] = next_page
 
-            data = self.get(GetType.BASIC, set_query_parameters(url, **get_args))
+            data = await self.get(GetType.BASIC, set_query_parameters(url, **get_args))
 
             total_pages = data.get('total-pages', 1)
 
@@ -133,7 +146,7 @@ class HelpshiftAPI:
             'total_returned': total_returned
         })
 
-    def analytics_paging_get(self, url, from_, issue_id=None):
+    async def analytics_paging_get(self, url, from_, issue_id=None):
         now = singer.utils.now()
         # Timezone info needs to match `now` so we can compare without error.
         from_ = from_.replace(tzinfo=now.tzinfo)
@@ -171,7 +184,7 @@ class HelpshiftAPI:
                     **get_args
                 )
 
-                data = self.get(GetType.ANALYTICS, url)
+                data = await self.get(GetType.ANALYTICS, url)
                 results = data.get('results')
 
                 LOGGER.info('helpshift analytics paging request', extra={

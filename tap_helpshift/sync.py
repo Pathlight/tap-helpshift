@@ -1,14 +1,16 @@
 import singer
-import singer.metrics as metrics
 from singer import metadata
 
 
 LOGGER = singer.get_logger()
 
 
-def sync_stream(state, start_date, instance, config, writer_q, *args):
+async def sync_stream(state, instance, counter, *args, start_date=None):
     stream = instance.stream
     mdata = stream.metadata
+
+    stream_name = stream.tap_stream_id
+    LOGGER.info("%s: Starting sync", stream_name)
 
     # If we have a bookmark, use it; otherwise use start_date & update bookmark with it
     if (instance.replication_method == 'INCREMENTAL' and
@@ -21,14 +23,14 @@ def sync_stream(state, start_date, instance, config, writer_q, *args):
         )
 
     parent_stream = stream
-    with metrics.record_counter(stream.tap_stream_id) as counter:
-        for (stream, record) in instance.sync(state, *args):
+    with counter:
+        async for (stream, record) in instance.sync(state, *args):
             # NB: Only count parent records in the case of sub-streams
             if stream.tap_stream_id == parent_stream.tap_stream_id:
                 counter.increment()
 
             with singer.Transformer() as transformer:
                 rec = transformer.transform(record, stream.schema.to_dict(), metadata=metadata.to_map(mdata))
-            writer_q.put({'write_record': (stream.tap_stream_id, rec)})
+            singer.write_record(stream.tap_stream_id, rec)
 
-        return counter.value
+        LOGGER.info("%s: Completed sync (%s rows)", stream_name, counter.value)
