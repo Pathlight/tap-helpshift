@@ -23,14 +23,13 @@ async def sync_stream(state, instance, counter, *args, start_date=None):
         )
 
     parent_stream = stream
-    with counter:
-        async for (stream, record) in instance.sync(state, *args):
-            # NB: Only count parent records in the case of sub-streams
-            if stream.tap_stream_id == parent_stream.tap_stream_id:
-                counter.increment()
+    async for (stream, record) in instance.sync(state, *args):
+        # NB: Only count parent records in the case of sub-streams
+        if stream.tap_stream_id == parent_stream.tap_stream_id:
+            counter.increment()
 
-            with singer.Transformer() as transformer:
-                rec = transformer.transform(record, stream.schema.to_dict(), metadata=metadata.to_map(mdata))
-            singer.write_record(stream.tap_stream_id, rec)
+        with singer.Transformer() as transformer:
+            rec = transformer.transform(record, stream.schema.to_dict(), metadata=metadata.to_map(mdata))
+        singer.write_record(stream.tap_stream_id, rec)
 
-        LOGGER.info("%s: Completed sync (%s rows)", stream_name, counter.value)
+    LOGGER.info("%s: Completed sync (%s rows)", stream_name, counter.value)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from collections import defaultdict
+from contextlib import ExitStack
 import asyncio
 import copy
 import json
@@ -184,10 +185,17 @@ class SyncApplication:
     async def run(self, state):
         self.write_schemas()
 
-        running = True
-        while running:
-            self.spawn_selected_streams(state)
-            running = await self.manage_tasks(timeout=10)
+        counters = set()
+        with ExitStack() as stack:
+            for counter in self.stream_counters.values():
+                if counter not in counters:
+                    counters.add(counter)
+                    stack.enter_context(counter)
+
+            running = True
+            while running:
+                self.spawn_selected_streams(state)
+                running = await self.manage_tasks(timeout=1)
 
         singer.write_state(state)
         LOGGER.info("Finished sync")
