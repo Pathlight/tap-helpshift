@@ -145,7 +145,7 @@ class SyncApplication:
             self.stream_counters[stream_name] = metrics.record_counter(stream_name)
         counter = self.stream_counters[stream_name]
         instance = STREAMS[stream_name](self.client, start_date, sync_stream_bg=self.sync_stream_bg)
-        task = asyncio.create_task(sync_stream(state, instance, counter, start_date=start_date))
+        task = asyncio.create_task(sync_stream(state, instance, counter, *args, start_date=start_date))
         self.stream_name_by_task[task] = stream_name
 
     def spawn_selected_streams(self, state):
