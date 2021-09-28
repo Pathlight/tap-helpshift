@@ -42,7 +42,7 @@ class HelpshiftAPI:
     WAIT_TO_RETRY = 5  # documentation doesn't include error handling
     MIN_RESULTS = 10
 
-    def __init__(self, session, config, parallel_requests=500):
+    def __init__(self, session, config, parallel_requests=50):
         self.running = asyncio.Event()
         self.running.set()
         self.req_semaphore = asyncio.BoundedSemaphore(parallel_requests)
@@ -71,15 +71,17 @@ class HelpshiftAPI:
             rate_limited = False
             async with self.req_semaphore:
                 await self.running.wait()
+                current = asyncio.current_task()
 
                 async def _get_resp_text(resp):
                     """ Dumb method to funnel resp.text call exceptions """
                     try:
-                        return await resp.text()
+                        text = await resp.text()
+                        return str(text)
                     except:
                         return ''
 
-                LOGGER.info(f'helpshift get request {url}')
+                LOGGER.info(f'{current.get_name()} helpshift get request {url}')
                 resp = None
 
                 try:
@@ -91,16 +93,16 @@ class HelpshiftAPI:
                         aiohttp.client_exceptions.ClientPayloadError) as exc:
                     if resp.status == 429 and num_retries < self.MAX_RETRIES:
                         rate_limited = True
-                        rate_limit_msg = _get_resp_text(resp.text)
+                        rate_limit_msg = await _get_resp_text(resp)
                         LOGGER.info(
                             f'api query helpshift rate limit: {rate_limit_msg}', extra={
                                 'url': url
                             }
                         )
                     elif resp.status >= 500 and num_retries < self.MAX_RETRIES:
-                        error_msg = _get_resp_text(resp)
+                        error_msg = await _get_resp_text(resp)
                         LOGGER.info(
-                            f'api query helpshift 5xx error {resp_status}', extra={
+                            f'api query helpshift 5xx error {resp.status}', extra={
                                 'url': url
                             }
                         )
@@ -109,7 +111,7 @@ class HelpshiftAPI:
                         aiohttp.client_exceptions.ClientConnectionError,
                         RuntimeError) as exc:
                     if resp:
-                        error_msg = _get_resp_text(resp)
+                        error_msg = await _get_resp_text(resp)
                         LOGGER.info(
                             f'api query helpshift connection error {resp.status}', extra={
                                 'url': url
@@ -134,6 +136,9 @@ class HelpshiftAPI:
         get_args = {k: v for k, v in get_args.items() if v is not None}
         if results_key == 'issues':
             get_args['sort-order'] = 'asc'
+
+        if 'page-size' not in get_args:
+            get_args['page-size'] = 1000
 
         while next_page:
             # Helpshift returns a 400 error when the number of issues
@@ -175,34 +180,43 @@ class HelpshiftAPI:
         })
 
     async def analytics_paging_get(self, url, from_, issue_id=None):
-        now = singer.utils.now()
-        # Timezone info needs to match `now` so we can compare without error.
-        from_ = from_.replace(tzinfo=now.tzinfo)
 
-        # Querying for a span of >180 days fails with a 400
-        max_timedelta = datetime.timedelta(days=180)
-        periods = []
-        while now - from_ > max_timedelta:
-            next_from = from_ + max_timedelta
-            periods.append((from_, next_from))
-            from_ = next_from
-        if from_ < now:
-            periods.append((from_, now))
+        request_args = []
+        if issue_id:
+            request_args.append({
+                'id': issue_id
+            })
+        else:
+            now = singer.utils.now()
+            # Timezone info needs to match `now` so we can compare without error.
+            from_ = from_.replace(tzinfo=now.tzinfo)
 
-        total_returned = 0
+            # Querying for a span of >180 days fails with a 400
+            max_timedelta = datetime.timedelta(days=180)
+            periods = []
+            while now - from_ > max_timedelta:
+                next_from = from_ + max_timedelta
+                periods.append((from_, next_from))
+                from_ = next_from
+            if from_ < now:
+                periods.append((from_, now))
 
-        date_fmt = '%Y-%m-%dT%H:%M:%S'
-        for from_, to in periods:
-            get_args = {
-                'from': from_.strftime(date_fmt),
-                'to': to.strftime(date_fmt),
-                'timezone': 'UTC',
-                'limit': 2000,
-                'includes': [
-                    'human_ttfr',
-                    'first_human_responder_id'
-                ]
-            }
+            total_returned = 0
+
+            date_fmt = '%Y-%m-%dT%H:%M:%S'
+            for from_, to in periods:
+                request_args.append({
+                    'from': from_.strftime(date_fmt),
+                    'to': to.strftime(date_fmt),
+                    'timezone': 'UTC',
+                    'limit': 2000,
+                    'includes': [
+                        'human_ttfr',
+                        'first_human_responder_id'
+                    ]
+                })
+
+        for get_args in request_args:
             if issue_id:
                 get_args['id'] = issue_id
 
@@ -213,6 +227,8 @@ class HelpshiftAPI:
                 )
 
                 data = await self.get(GetType.ANALYTICS, url)
+                if not data:
+                    break
                 results = data.get('results')
 
                 LOGGER.info('helpshift analytics paging request', extra={

@@ -76,7 +76,9 @@ class Issues(Stream):
 
     async def sync(self, state):
         try:
-            sync_thru = singer.get_bookmark(state, self.name, self.replication_key) or self.start_date_int
+            sync_thru = singer.get_bookmark(
+                state, self.name, self.replication_key
+            ) or self.start_date_int
         except TypeError:
             sync_thru = self.start_date_int
 
@@ -104,7 +106,7 @@ class Issues(Stream):
                 async for item in messages_stream.sync(row):
                     yield item
 
-            if analytics_stream.is_selected():
+            if analytics_stream.is_selected() and self.stream.metadata[0].get('sync_analytics'):
                 self.sync_stream_bg(analytics_stream.name, state, row)
 
         self.update_bookmark(state, curr_synced_thru)
@@ -151,23 +153,6 @@ class Agents(Stream):
 class IssueAnalytics(Stream):
     name = 'issue_analytics'
     url = 'analytics/issue'
-    key_properties = ['row_id']
-    replication_method = 'INCREMENTAL'
-    replication_key = 'updated_at'
-
-    async def sync(self, issue):
-        created_at = datetime.datetime.fromtimestamp(issue['created_at'] / 1000)
-        async for row in self.client.analytics_paging_get(
-            self.url,
-            from_=created_at,
-            issue_id=issue['id']
-        ):
-            yield (self.stream, row)
-
-
-class IssueAnalytics(Stream):
-    name = 'issue_analytics'
-    url = 'analytics/issue'
     key_properites = ['row_id']
     replication_method = 'INCREMENTAL'
     replication_key = 'updated_at'
@@ -177,10 +162,11 @@ class IssueAnalytics(Stream):
         curr_synced_thru = None
 
         if issue:
-            LOGGER.info('Syncing analytics for issue %r', issue['id'])
+            LOGGER.info('Syncing issue analytics for %r', issue['id'])
             from_ = datetime.datetime.fromtimestamp(issue['created_at'] / 1000)
             issue_id = issue['id']
         else:
+            LOGGER.info('Syncing issue analytics')
             try:
                 sync_thru = singer.get_bookmark(state, self.name, self.replication_key) or self.start_date
             except TypeError:
