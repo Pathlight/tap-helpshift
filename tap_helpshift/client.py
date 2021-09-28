@@ -2,11 +2,14 @@ import asyncio
 import datetime
 import enum
 import random
+import statistics
 import time
 import urllib
+import re
 
 import aiohttp
 import singer
+import dateutil.parser
 
 
 LOGGER = singer.get_logger()
@@ -37,28 +40,99 @@ class GetType(enum.Enum):
     ANALYTICS = 'analytics'
 
 
+class QueryStats:
+    log_size = 1000
+
+    def __init__(self):
+        self._requests = []
+
+    def record(self, url, status):
+        self._requests.append({
+            'url': url,
+            'status': status,
+            'at': time.monotonic()
+        })
+
+    def recovery_stats(self):
+        # High level questions:
+        # - How long should we wait after a rate limit error?
+        # - How long should we wait after a 500 error?
+        # - How many concurrent requests should we use (want to maximize throughput)?
+
+        all_periods = {
+            'success': [None],
+            'disconnect': [None],
+            'rate_limit': [None],
+            'error': [None],
+        }
+
+        def extend_period(periods, request):
+            for _periods in all_periods.values():
+                if _periods is not periods:
+                    close_last_period(_periods)
+            if periods[-1] is None:
+                periods[-1] = (request['at'], request['at'])
+            else:
+                periods[-1] = (periods[-1][0], request['at'])
+
+        def close_last_period(periods):
+            if periods[-1] is not None:
+                periods.append(None)
+
+        for request in self._requests:
+            if request['status'] == 0:
+                extend_period(all_periods['disconnect'], request)
+            elif request['status'] >= 200 and request['status'] < 400:
+                extend_period(all_periods['success'], request)
+            elif request['status'] == 429:
+                extend_period(all_periods['rate_limit'], request)
+            else:
+                extend_period(all_periods['error'], request)
+
+        stats = {}
+        for key, periods in all_periods.items():
+            if periods:
+                durations = [p[1] - p[0] for p in periods if p is not None]
+                if not durations:
+                    continue
+                stats[key] = {
+                    'min': min(durations),
+                    'max': max(durations),
+                    'avg': statistics.mean(durations),
+                    'median': statistics.median(durations),
+                }
+        return stats
+
+
 class HelpshiftAPI:
-    MAX_RETRIES = 10
-    WAIT_TO_RETRY = 5  # documentation doesn't include error handling
+    MAX_RETRIES = 8
+    WAIT_TO_RETRY = 20  # documentation doesn't include error handling
+    MIN_WAIT = 5
+    MIN_WAIT_RATE_LIMIT = 120
     MIN_RESULTS = 10
 
     def __init__(self, session, config, parallel_requests=25):
         self.running = asyncio.Event()
         self.running.set()
         self.req_semaphore = asyncio.BoundedSemaphore(parallel_requests)
+        self.stats = QueryStats()
 
         self.session = session
         subdomain = config['subdomain']
         self.base_url = 'https://api.helpshift.com/v1/{}'.format(subdomain)
         self.analytics_base_url = 'https://analytics.helpshift.com/v1/{}'.format(subdomain)
 
-    async def pause(self, seconds):
+    async def global_pause(self, seconds):
         if self.running.is_set():
-            LOGGER.info('Pausing requests for %r seconds', seconds)
+            LOGGER.info('Pausing all requests for %r seconds', seconds)
+            LOGGER.info('Recovery stats: %r', self.stats.recovery_stats())
             self.running.clear()
-            await asyncio.sleep(seconds)
-            self.running.set()
-            LOGGER.info('Requests unpaused')
+            task = asyncio.create_task(asyncio.sleep(seconds))
+            self._global_pause_task = task
+            await task
+            if self._global_pause_task == task:
+                self.running.set()
+                LOGGER.info('Requests unpaused')
 
     async def get(self, get_type, url, params=None):
         if not url.startswith('https://'):
@@ -68,10 +142,10 @@ class HelpshiftAPI:
                 url = f'{self.analytics_base_url}/{url}'
 
         for num_retries in range(self.MAX_RETRIES + 1):
-            rate_limited = False
+            pause = False
+            wait_s = self.MIN_WAIT
             async with self.req_semaphore:
                 await self.running.wait()
-                current = asyncio.current_task()
 
                 async def _get_resp_text(resp):
                     """ Dumb method to funnel resp.text call exceptions """
@@ -81,28 +155,53 @@ class HelpshiftAPI:
                     except:
                         return ''
 
-                LOGGER.info(f'{current.get_name()} helpshift get request {url}')
-                resp = None
+                def _get_wait_time(stats_key):
+                    stats = self.stats.recovery_stats()
+                    wait_s = stats.get(stats_key, {}).get('median', 0)
+                    return max(wait_s, self.MIN_WAIT)
+
+                # current = asyncio.current_task()
+                # LOGGER.info(f'{current.get_name()} helpshift get request {url}')
+                err_message = None
+                status = 0
+                wait_s = 0
 
                 try:
-                    resp = await self.session.get(url, params=params)
-                    resp.raise_for_status()
-                    return await resp.json()
+                    async with self.session.get(url, params=params) as resp:
+                        if resp.status >= 200:
+                            status = resp.status
+                        if not status or status >= 400:
+                            err_message = await _get_resp_text(resp)
+                        resp.raise_for_status()
+                        self.stats.record(url, status)
+                        return await resp.json()
 
                 except (aiohttp.client_exceptions.ClientResponseError,
                         aiohttp.client_exceptions.ClientPayloadError) as exc:
-                    if resp.status == 429 and num_retries < self.MAX_RETRIES:
-                        rate_limited = True
-                        rate_limit_msg = await _get_resp_text(resp)
+                    self.stats.record(url, status)
+
+                    if status == 429 and num_retries < self.MAX_RETRIES:
+                        pause = True
+
+                        match = re.search(r'retry after (.*) UTC', err_message or '')
+                        if match:
+                            # If we get a request to retry after a certain time, we'll respect it.
+                            retry_after = dateutil.parser.parse(match.group(1))
+                            now = datetime.datetime.utcnow().replace(tzinfo=retry_after.tzinfo)
+                            wait_s = (retry_after - now).total_seconds()
+                            LOGGER.debug('retry after %r', retry_after)
+                        else:
+                            wait_s = _get_wait_time('rate_limit')
+
                         LOGGER.info(
-                            f'api query helpshift rate limit: {rate_limit_msg}', extra={
+                            f'api query helpshift rate limit: {err_message}', extra={
                                 'url': url
                             }
                         )
-                    elif resp.status >= 500 and num_retries < self.MAX_RETRIES:
-                        error_msg = await _get_resp_text(resp)
+                    elif status >= 500 and num_retries < self.MAX_RETRIES:
+                        wait_s = _get_wait_time('error')
                         LOGGER.info(
-                            f'api query helpshift 5xx error {resp.status}', extra={
+                            f'api query helpshift 5xx error {status}: {err_message}', extra={
                                 'url': url
                             }
                         )
@@ -110,23 +209,26 @@ class HelpshiftAPI:
                 except (aiohttp.client_exceptions.ServerDisconnectedError,
                         aiohttp.client_exceptions.ClientConnectionError,
                         RuntimeError) as exc:
-                    if resp:
-                        error_msg = await _get_resp_text(resp)
-                        LOGGER.info(
-                            f'api query helpshift connection error {resp.status}', extra={
-                                'url': url
-                            }
-                        )
+                    pause = True
+                    self.stats.record(url, 0)
+                    wait_s = _get_wait_time('disconnect')
+                    LOGGER.info(
+                        f'api query helpshift connection error {status}: {err_message}', extra={
+                            'url': url
+                        }
+                    )
 
                 except (aiohttp.ClientError) as exc:
                     raise Exception(f'helpshift query error: {exc}')
 
-            if rate_limited:
+            wait_s = max(wait_s, self.MIN_WAIT)
+            if pause:
+                # wait_s = max(wait_s, self.MIN_WAIT_RATE_LIMIT)
                 # We're rate limited, make all requests wait
-                await self.pause(self.WAIT_TO_RETRY * num_retries)
-            else:
+                await self.global_pause(wait_s)
+            elif wait_s:
                 # This particular request had an error, so only it will wait
-                await asyncio.sleep(self.WAIT_TO_RETRY * num_retries)
+                await asyncio.sleep(wait_s)
 
     async def paging_get(self, url, results_key, replication_key=None, **get_args):
         next_page = 1

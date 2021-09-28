@@ -192,9 +192,9 @@ class SyncApplication:
                     counters.add(counter)
                     stack.enter_context(counter)
 
+            self.spawn_selected_streams(state)
             running = True
             while running:
-                self.spawn_selected_streams(state)
                 running = await self.manage_tasks(timeout=1)
 
         singer.write_state(state)
