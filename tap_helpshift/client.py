@@ -39,10 +39,10 @@ class GetType(enum.Enum):
 
 class HelpshiftAPI:
     MAX_RETRIES = 10
-    WAIT_TO_RETRY = 60  # documentation doesn't include error handling
+    WAIT_TO_RETRY = 5  # documentation doesn't include error handling
     MIN_RESULTS = 10
 
-    def __init__(self, session, config, parallel_requests=20):
+    def __init__(self, session, config, parallel_requests=500):
         self.running = asyncio.Event()
         self.running.set()
         self.req_semaphore = asyncio.BoundedSemaphore(parallel_requests)
@@ -52,11 +52,11 @@ class HelpshiftAPI:
         self.base_url = 'https://api.helpshift.com/v1/{}'.format(subdomain)
         self.analytics_base_url = 'https://analytics.helpshift.com/v1/{}'.format(subdomain)
 
-    async def pause(seconds):
+    async def pause(self, seconds):
         if self.running.is_set():
             LOGGER.info('Pausing requests for %r seconds', seconds)
             self.running.clear()
-            await asyncio.sleep(wait_s)
+            await asyncio.sleep(seconds)
             self.running.set()
             LOGGER.info('Requests unpaused')
 
@@ -67,36 +67,64 @@ class HelpshiftAPI:
             elif get_type == GetType.ANALYTICS:
                 url = f'{self.analytics_base_url}/{url}'
 
-        for num_retries in range(self.MAX_RETRIES):
+        for num_retries in range(self.MAX_RETRIES + 1):
             rate_limited = False
             async with self.req_semaphore:
                 await self.running.wait()
 
-                LOGGER.info(f'helpshift get request {url}')
-                async with self.session.get(url, params=params) as resp:
+                async def _get_resp_text(resp):
+                    """ Dumb method to funnel resp.text call exceptions """
                     try:
-                        resp.raise_for_status()
-                        return await resp.json()
-                    except (aiohttp.ClientResponseError, aiohttp.ClientConnectionError):
-                        if resp.status == 429 and num_retries < self.MAX_RETRIES:
-                            rate_limit_msg = await resp.text()
-                            LOGGER.info(f'api query helpshift rate limit {rate_limit_msg}')
-                            rate_limited = True
-                        elif resp.status >= 500 and num_retries < self.MAX_RETRIES:
-                            error_msg = await resp.text()
-                            LOGGER.info(f'api query helpshift 5xx error {resp.status} - {error_msg}', extra={
+                        return await resp.text()
+                    except:
+                        return ''
+
+                LOGGER.info(f'helpshift get request {url}')
+                resp = None
+
+                try:
+                    resp = await self.session.get(url, params=params)
+                    resp.raise_for_status()
+                    return await resp.json()
+
+                except (aiohttp.client_exceptions.ClientResponseError,
+                        aiohttp.client_exceptions.ClientPayloadError) as exc:
+                    if resp.status == 429 and num_retries < self.MAX_RETRIES:
+                        rate_limited = True
+                        rate_limit_msg = _get_resp_text(resp.text)
+                        LOGGER.info(
+                            f'api query helpshift rate limit: {rate_limit_msg}', extra={
                                 'url': url
-                            })
-                        else:
-                            error_msg = await resp.text()
-                            raise Exception(f'helpshift query error: {resp.status} - {error_msg}')
+                            }
+                        )
+                    elif resp.status >= 500 and num_retries < self.MAX_RETRIES:
+                        error_msg = _get_resp_text(resp)
+                        LOGGER.info(
+                            f'api query helpshift 5xx error {resp_status}', extra={
+                                'url': url
+                            }
+                        )
+
+                except (aiohttp.client_exceptions.ServerDisconnectedError,
+                        aiohttp.client_exceptions.ClientConnectionError,
+                        RuntimeError) as exc:
+                    if resp:
+                        error_msg = _get_resp_text(resp)
+                        LOGGER.info(
+                            f'api query helpshift connection error {resp.status}', extra={
+                                'url': url
+                            }
+                        )
+
+                except (aiohttp.ClientError) as exc:
+                    raise Exception(f'helpshift query error: {exc}')
 
             if rate_limited:
                 # We're rate limited, make all requests wait
-                await self.pause()
+                await self.pause(self.WAIT_TO_RETRY * num_retries)
             else:
                 # This particular request had an error, so only it will wait
-                await asyncio.sleep(self.WAIT_TO_RETRY)
+                await asyncio.sleep(self.WAIT_TO_RETRY * num_retries)
 
     async def paging_get(self, url, results_key, replication_key=None, **get_args):
         next_page = 1
