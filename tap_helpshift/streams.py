@@ -106,7 +106,8 @@ class Issues(Stream):
                 async for item in messages_stream.sync(row):
                     yield item
 
-            if analytics_stream.is_selected() and self.stream.metadata[0].get('sync_analytics'):
+            sync_analytics = self.stream.metadata[0]['metadata'].get('sync_analytics')
+            if analytics_stream.is_selected() and sync_analytics:
                 self.sync_stream_bg(analytics_stream.name, state, row)
 
         self.update_bookmark(state, curr_synced_thru)
@@ -163,7 +164,7 @@ class IssueAnalytics(Stream):
 
         if issue:
             LOGGER.info('Syncing issue analytics for %r', issue['id'])
-            from_ = datetime.datetime.fromtimestamp(issue['created_at'] / 1000)
+            from_ = None
             issue_id = issue['id']
         else:
             LOGGER.info('Syncing issue analytics')

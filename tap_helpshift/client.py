@@ -42,7 +42,7 @@ class HelpshiftAPI:
     WAIT_TO_RETRY = 5  # documentation doesn't include error handling
     MIN_RESULTS = 10
 
-    def __init__(self, session, config, parallel_requests=50):
+    def __init__(self, session, config, parallel_requests=25):
         self.running = asyncio.Event()
         self.running.set()
         self.req_semaphore = asyncio.BoundedSemaphore(parallel_requests)
