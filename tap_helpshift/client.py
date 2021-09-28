@@ -127,12 +127,13 @@ class HelpshiftAPI:
             LOGGER.info('Pausing all requests for %r seconds', seconds)
             LOGGER.info('Recovery stats: %r', self.stats.recovery_stats())
             self.running.clear()
-            task = asyncio.create_task(asyncio.sleep(seconds))
-            self._global_pause_task = task
-            await task
-            if self._global_pause_task == task:
-                self.running.set()
-                LOGGER.info('Requests unpaused')
+
+        task = asyncio.create_task(asyncio.sleep(seconds))
+        self._global_pause_task = task
+        await task
+        if self._global_pause_task == task:
+            self.running.set()
+            LOGGER.info('Requests unpaused')
 
     async def get(self, get_type, url, params=None):
         if not url.startswith('https://'):
