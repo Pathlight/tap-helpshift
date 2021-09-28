@@ -184,7 +184,12 @@ class HelpshiftAPI:
         request_args = []
         if issue_id:
             request_args.append({
-                'id': issue_id
+                'id': issue_id,
+                'timezone': 'UTC',
+                'includes': [
+                    'human_ttfr',
+                    'first_human_responder_id'
+                ]
             })
         else:
             now = singer.utils.now()
