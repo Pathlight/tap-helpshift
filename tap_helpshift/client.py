@@ -4,9 +4,9 @@ import datetime
 import enum
 import random
 import re
-import statistics
 import time
 import urllib
+import random
 
 import aiohttp
 import singer
@@ -41,59 +41,67 @@ class GetType(enum.Enum):
     ANALYTICS = 'analytics'
 
 
+class RateLimitedError(Exception):
+    pass
+
+
 class RateLimiter:
     LIMIT = 1500
     PERIOD = 60  # 1 minute
-    # This should be set to the maximum number of requests that we don't
-    # mind failing all at once.
-    CONCURRENCY = 100
 
-    def __init__(self):
+    def __init__(self, allowance=1, concurrent_allowance=1):
         self._request_timestamps = []
-        self._lock = asyncio.Lock()
-        self._semaphore = asyncio.BoundedSemaphore(self.CONCURRENCY)
+        self.limit = int(self.LIMIT * allowance)
+        self.semphore = asyncio.BoundedSemaphore(int(self.limit * concurrent_allowance))
 
     def _clean_request_timestamps(self, now):
         while self._request_timestamps and now - self._request_timestamps[0] >= self.PERIOD:
             self._request_timestamps.pop(0)
 
     async def try_acquire(self, now):
-        async with self._lock:
-            self._clean_request_timestamps(now)
-            if len(self._request_timestamps) >= self.LIMIT:
-                return False
-            else:
-                self._request_timestamps.append(now)
-                return True
+        self._clean_request_timestamps(now)
+        self.check()
+        self._request_timestamps.append(now)
 
     async def rate_limited(self, until=None):
         # We got a rate limit we didn't expect. Since we don't own the api
         # key, probably someone else is using it to make requests. Update
         # _request_timestamps to "know" about these requests so the rate
         # limiter works more smoothly.
-        async with self._lock:
-            if until:
-                now = until - self.PERIOD
-            else:
-                now = time.monotonic()
-            LOGGER.info(f'unexpected rate limit: updating state')
-            self._clean_request_timestamps(now)
-            while len(self._request_timestamps) < self.LIMIT:
-                self._request_timestamps.append(now)
+        now = time.monotonic()
+        if until:
+            now_dt = datetime.datetime.utcnow().replace(tzinfo=until.tzinfo)
+            now = now + (until - now_dt).total_seconds()
+        else:
+            now = time.monotonic()
+        LOGGER.info(f'unexpected rate limit: updating state')
+        self._clean_request_timestamps(now)
+        while len(self._request_timestamps) < self.limit:
+            self._request_timestamps.append(now)
+        self._request_timestamps.sort()
+
+    async def check(self):
+        if len(self._request_timestamps) >= self.limit:
+            raise RateLimitedError
 
     @asynccontextmanager
     async def acquire(self):
-        async with self._semaphore:
+        async with self.semphore:
+            # Stagger all requests slightly. This helps us avoid sending
+            # too many requests to helpshift when we would get a rate limit
+            # response back. This way, the rate limited method will have a
+            # chance to update the internal state before more requests are run.
+            await asyncio.sleep(random.random())
             while True:
                 now = time.monotonic()
-                acquired = await self.try_acquire(now)
-                if not acquired:
+                try:
+                    await self.try_acquire(now)
+                    break
+                except RateLimitedError:
                     # Wait until the next request would be cleaned up
                     wait_s = self.PERIOD - (now - self._request_timestamps[0])
                     LOGGER.info(f'rate limited: checking again in {wait_s} seconds')
                     await asyncio.sleep(wait_s)
-                else:
-                    break
             yield
 
 
@@ -108,7 +116,9 @@ class HelpshiftAPI:
     def __init__(self, session, config):
         self.running = asyncio.Event()
         self.running.set()
-        self.rate_limiter = RateLimiter()
+        self.rate_limiter = RateLimiter(
+            allowance=config.get('rate_limit_allowance_percent', 1),
+            concurrent_allowance=config.get('rate_limit_concurrent_allowance_percent', 1))
 
         self.session = session
         subdomain = config['subdomain']
