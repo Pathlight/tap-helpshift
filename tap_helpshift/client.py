@@ -80,7 +80,7 @@ class RateLimiter:
             self._request_timestamps.append(now)
         self._request_timestamps.sort()
 
-    async def check(self):
+    def check(self):
         if len(self._request_timestamps) >= self.limit:
             raise RateLimitedError
 
