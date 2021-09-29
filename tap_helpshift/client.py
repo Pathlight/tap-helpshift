@@ -2,10 +2,10 @@ import asyncio
 import datetime
 import enum
 import random
+import re
 import statistics
 import time
 import urllib
-import re
 
 import aiohttp
 import singer
@@ -40,82 +40,67 @@ class GetType(enum.Enum):
     ANALYTICS = 'analytics'
 
 
-class QueryStats:
-    log_size = 1000
+class RateLimiter:
+    LIMIT = 1500
+    PERIOD = 60  # 1 minute
 
     def __init__(self):
-        self._requests = []
+        self._request_timestamps = []
+        self._lock = asyncio.Lock()
 
-    def record(self, url, status):
-        self._requests.append({
-            'url': url,
-            'status': status,
-            'at': time.monotonic()
-        })
+    def _clean_request_timestamps(self, now):
+        while self._request_timestamps and now - self._request_timestamps[0] >= self.PERIOD:
+            self._request_timestamps.pop(0)
 
-    def recovery_stats(self):
-        # High level questions:
-        # - How long should we wait after a rate limit error?
-        # - How long should we wait after a 500 error?
-        # - How many concurrent requests should we use (want to maximize throughput)?
-
-        all_periods = {
-            'success': [None],
-            'disconnect': [None],
-            'rate_limit': [None],
-            'error': [None],
-        }
-
-        def extend_period(periods, request):
-            for _periods in all_periods.values():
-                if _periods is not periods:
-                    close_last_period(_periods)
-            if periods[-1] is None:
-                periods[-1] = (request['at'], request['at'])
+    async def try_acquire(self, now):
+        async with self._lock:
+            self._clean_request_timestamps(now)
+            if len(self._request_timestamps) >= self.LIMIT:
+                return False
             else:
-                periods[-1] = (periods[-1][0], request['at'])
+                self._request_timestamps.append(now)
+                return True
 
-        def close_last_period(periods):
-            if periods[-1] is not None:
-                periods.append(None)
-
-        for request in self._requests:
-            if request['status'] == 0:
-                extend_period(all_periods['disconnect'], request)
-            elif request['status'] >= 200 and request['status'] < 400:
-                extend_period(all_periods['success'], request)
-            elif request['status'] == 429:
-                extend_period(all_periods['rate_limit'], request)
+    async def rate_limited(self, until=None):
+        # We got a rate limit we didn't expect. Since we don't own the api
+        # key, probably someone else is using it to make requests. Update
+        # _request_timestamps to "know" about these requests so the rate
+        # limiter works more smoothly.
+        async with self._lock:
+            if until:
+                now = until - self.PERIOD
             else:
-                extend_period(all_periods['error'], request)
+                now = time.monotonic()
+            LOGGER.info(f'unexpected rate limit: updating state')
+            self._clean_request_timestamps(now)
+            while len(self._request_timestamps) < self.LIMIT:
+                self._request_timestamps.append(now)
 
-        stats = {}
-        for key, periods in all_periods.items():
-            if periods:
-                durations = [p[1] - p[0] for p in periods if p is not None]
-                if not durations:
-                    continue
-                stats[key] = {
-                    'min': min(durations),
-                    'max': max(durations),
-                    'avg': statistics.mean(durations),
-                    'median': statistics.median(durations),
-                }
-        return stats
+    async def acquire(self):
+        while True:
+            now = time.monotonic()
+            acquired = await self.try_acquire(now)
+            if not acquired:
+                # Wait until the next request would be cleaned up
+                wait_s = self.PERIOD - (now - self._request_timestamps[0])
+                LOGGER.info(f'rate limited: checking again in {wait_s} seconds')
+                await asyncio.sleep(wait_s)
+            else:
+                break
 
 
 class HelpshiftAPI:
     MAX_RETRIES = 8
-    WAIT_TO_RETRY = 20  # documentation doesn't include error handling
-    MIN_WAIT = 5
-    MIN_WAIT_RATE_LIMIT = 120
     MIN_RESULTS = 10
 
-    def __init__(self, session, config, parallel_requests=25):
+    RATE_LIMIT_WAIT = 60
+    MIN_WAIT = 5
+    RATE_LIMIT_PER_MINUTE = 1500
+
+    def __init__(self, session, config):
         self.running = asyncio.Event()
         self.running.set()
-        self.req_semaphore = asyncio.BoundedSemaphore(parallel_requests)
-        self.stats = QueryStats()
+        self.rate_limiter = RateLimiter()
 
         self.session = session
         subdomain = config['subdomain']
@@ -125,7 +110,6 @@ class HelpshiftAPI:
     async def global_pause(self, seconds):
         if self.running.is_set():
             LOGGER.info('Pausing all requests for %r seconds', seconds)
-            LOGGER.info('Recovery stats: %r', self.stats.recovery_stats())
             self.running.clear()
 
         task = asyncio.create_task(asyncio.sleep(seconds))
@@ -144,87 +128,75 @@ class HelpshiftAPI:
 
         for num_retries in range(self.MAX_RETRIES + 1):
             pause = False
-            wait_s = self.MIN_WAIT
-            async with self.req_semaphore:
-                await self.running.wait()
+            await self.rate_limiter.acquire()
+            await self.running.wait()
 
-                async def _get_resp_text(resp):
-                    """ Dumb method to funnel resp.text call exceptions """
-                    try:
-                        text = await resp.text()
-                        return str(text)
-                    except:
-                        return ''
-
-                def _get_wait_time(stats_key):
-                    stats = self.stats.recovery_stats()
-                    wait_s = stats.get(stats_key, {}).get('median', 0)
-                    return max(wait_s, self.MIN_WAIT)
-
-                # current = asyncio.current_task()
-                # LOGGER.info(f'{current.get_name()} helpshift get request {url}')
-                err_message = None
-                status = 0
-                wait_s = 0
-
+            async def _get_resp_text(resp):
+                """ Dumb method to funnel resp.text call exceptions """
                 try:
-                    async with self.session.get(url, params=params) as resp:
-                        if resp.status >= 200:
-                            status = resp.status
-                        if not status or status >= 400:
-                            err_message = await _get_resp_text(resp)
-                        resp.raise_for_status()
-                        self.stats.record(url, status)
-                        return await resp.json()
+                    text = await resp.text()
+                    return str(text)
+                except:
+                    return ''
 
-                except (aiohttp.client_exceptions.ClientResponseError,
-                        aiohttp.client_exceptions.ClientPayloadError) as exc:
-                    self.stats.record(url, status)
+            err_message = None
+            status = 0
+            wait_s = 0
 
-                    if status == 429 and num_retries < self.MAX_RETRIES:
-                        pause = True
+            try:
+                async with self.session.get(url, params=params) as resp:
+                    if resp.status >= 200:
+                        status = resp.status
+                    if not status or status >= 400:
+                        err_message = await _get_resp_text(resp)
+                    resp.raise_for_status()
+                    return await resp.json()
 
-                        match = re.search(r'retry after (.*) UTC', err_message or '')
-                        if match:
-                            # If we get a request to retry after a certain time, we'll respect it.
+            except (aiohttp.client_exceptions.ClientResponseError,
+                    aiohttp.client_exceptions.ClientPayloadError) as exc:
+                if status == 429 and num_retries < self.MAX_RETRIES:
+                    match = re.search(r'retry after (.*) UTC', err_message or '')
+                    retry_after = None
+                    if match:
+                        # If we get a request to retry after a certain time, we'll respect it.
+                        try:
                             retry_after = dateutil.parser.parse(match.group(1))
-                            now = datetime.datetime.utcnow().replace(tzinfo=retry_after.tzinfo)
-                            wait_s = (retry_after - now).total_seconds()
-                            LOGGER.debug('retry after %r', retry_after)
-                        else:
-                            wait_s = _get_wait_time('rate_limit')
+                        except (TypeError, ValueError):
+                            pass
 
-                        LOGGER.info(
-                            f'api query helpshift rate limit: {err_message}', extra={
-                                'url': url
-                            }
-                        )
-                    elif status >= 500 and num_retries < self.MAX_RETRIES:
-                        wait_s = _get_wait_time('error')
-                        LOGGER.info(
-                            f'api query helpshift 5xx error {status}: {err_message}', extra={
-                                'url': url
-                            }
-                        )
+                    await self.rate_limiter.rate_limited(until=retry_after)
+                    if retry_after:
+                        now = datetime.datetime.utcnow().replace(tzinfo=retry_after.tzinfo)
+                        wait_s = (retry_after - now).total_seconds()
+                        LOGGER.info('retry after %r', retry_after)
 
-                except (aiohttp.client_exceptions.ServerDisconnectedError,
-                        aiohttp.client_exceptions.ClientConnectionError,
-                        RuntimeError) as exc:
-                    pause = True
-                    self.stats.record(url, 0)
-                    wait_s = _get_wait_time('disconnect')
                     LOGGER.info(
-                        f'api query helpshift connection error {status}: {err_message}', extra={
+                        f'api query helpshift rate limit: {err_message}', extra={
+                            'url': url
+                        }
+                    )
+                elif status >= 500 and num_retries < self.MAX_RETRIES:
+                    LOGGER.info(
+                        f'api query helpshift 5xx error {status}: {err_message}', extra={
                             'url': url
                         }
                     )
 
-                except (aiohttp.ClientError) as exc:
-                    raise Exception(f'helpshift query error: {exc}')
+            except (aiohttp.client_exceptions.ServerDisconnectedError,
+                    aiohttp.client_exceptions.ClientConnectionError,
+                    RuntimeError) as exc:
+                pause = True
+                LOGGER.info(
+                    f'api query helpshift connection error {status}: {err_message}', extra={
+                        'url': url
+                    }
+                )
+
+            except (aiohttp.ClientError) as exc:
+                raise Exception(f'helpshift query error: {exc}')
 
             wait_s = max(wait_s, self.MIN_WAIT)
             if pause:
-                # wait_s = max(wait_s, self.MIN_WAIT_RATE_LIMIT)
                 # We're rate limited, make all requests wait
                 await self.global_pause(wait_s)
             elif wait_s:
