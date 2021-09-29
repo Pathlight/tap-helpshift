@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import asyncio
 import datetime
 import enum
@@ -43,10 +44,14 @@ class GetType(enum.Enum):
 class RateLimiter:
     LIMIT = 1500
     PERIOD = 60  # 1 minute
+    # This should be set to the maximum number of requests that we don't
+    # mind failing all at once.
+    CONCURRENCY = 100
 
     def __init__(self):
         self._request_timestamps = []
         self._lock = asyncio.Lock()
+        self._semaphore = asyncio.BoundedSemaphore(self.CONCURRENCY)
 
     def _clean_request_timestamps(self, now):
         while self._request_timestamps and now - self._request_timestamps[0] >= self.PERIOD:
@@ -76,17 +81,20 @@ class RateLimiter:
             while len(self._request_timestamps) < self.LIMIT:
                 self._request_timestamps.append(now)
 
+    @asynccontextmanager
     async def acquire(self):
-        while True:
-            now = time.monotonic()
-            acquired = await self.try_acquire(now)
-            if not acquired:
-                # Wait until the next request would be cleaned up
-                wait_s = self.PERIOD - (now - self._request_timestamps[0])
-                LOGGER.info(f'rate limited: checking again in {wait_s} seconds')
-                await asyncio.sleep(wait_s)
-            else:
-                break
+        async with self._semaphore:
+            while True:
+                now = time.monotonic()
+                acquired = await self.try_acquire(now)
+                if not acquired:
+                    # Wait until the next request would be cleaned up
+                    wait_s = self.PERIOD - (now - self._request_timestamps[0])
+                    LOGGER.info(f'rate limited: checking again in {wait_s} seconds')
+                    await asyncio.sleep(wait_s)
+                else:
+                    break
+            yield
 
 
 class HelpshiftAPI:
@@ -128,80 +136,80 @@ class HelpshiftAPI:
 
         for num_retries in range(self.MAX_RETRIES + 1):
             pause = False
-            await self.rate_limiter.acquire()
-            await self.running.wait()
+            async with self.rate_limiter.acquire():
+                await self.running.wait()
 
-            async def _get_resp_text(resp):
-                """ Dumb method to funnel resp.text call exceptions """
+                async def _get_resp_text(resp):
+                    """ Dumb method to funnel resp.text call exceptions """
+                    try:
+                        text = await resp.text()
+                        return str(text)
+                    except:
+                        return ''
+
+                err_message = None
+                status = 0
+                wait_s = 0
+
                 try:
-                    text = await resp.text()
-                    return str(text)
-                except:
-                    return ''
+                    async with self.session.get(url, params=params) as resp:
+                        if resp.status >= 200:
+                            status = resp.status
+                        if not status or status >= 400:
+                            err_message = await _get_resp_text(resp)
+                        resp.raise_for_status()
+                        return await resp.json()
 
-            err_message = None
-            status = 0
-            wait_s = 0
+                except (aiohttp.client_exceptions.ClientResponseError,
+                        aiohttp.client_exceptions.ClientPayloadError) as exc:
+                    if status == 429 and num_retries < self.MAX_RETRIES:
+                        match = re.search(r'retry after (.*) UTC', err_message or '')
+                        retry_after = None
+                        if match:
+                            # If we get a request to retry after a certain time, we'll respect it.
+                            try:
+                                retry_after = dateutil.parser.parse(match.group(1))
+                            except (TypeError, ValueError):
+                                pass
 
-            try:
-                async with self.session.get(url, params=params) as resp:
-                    if resp.status >= 200:
-                        status = resp.status
-                    if not status or status >= 400:
-                        err_message = await _get_resp_text(resp)
-                    resp.raise_for_status()
-                    return await resp.json()
+                        await self.rate_limiter.rate_limited(until=retry_after)
+                        if retry_after:
+                            now = datetime.datetime.utcnow().replace(tzinfo=retry_after.tzinfo)
+                            wait_s = (retry_after - now).total_seconds()
+                            LOGGER.info('retry after %r', retry_after)
 
-            except (aiohttp.client_exceptions.ClientResponseError,
-                    aiohttp.client_exceptions.ClientPayloadError) as exc:
-                if status == 429 and num_retries < self.MAX_RETRIES:
-                    match = re.search(r'retry after (.*) UTC', err_message or '')
-                    retry_after = None
-                    if match:
-                        # If we get a request to retry after a certain time, we'll respect it.
-                        try:
-                            retry_after = dateutil.parser.parse(match.group(1))
-                        except (TypeError, ValueError):
-                            pass
+                        LOGGER.info(
+                            f'api query helpshift rate limit: {err_message}', extra={
+                                'url': url
+                            }
+                        )
+                    elif status >= 500 and num_retries < self.MAX_RETRIES:
+                        LOGGER.info(
+                            f'api query helpshift 5xx error {status}: {err_message}', extra={
+                                'url': url
+                            }
+                        )
 
-                    await self.rate_limiter.rate_limited(until=retry_after)
-                    if retry_after:
-                        now = datetime.datetime.utcnow().replace(tzinfo=retry_after.tzinfo)
-                        wait_s = (retry_after - now).total_seconds()
-                        LOGGER.info('retry after %r', retry_after)
-
+                except (aiohttp.client_exceptions.ServerDisconnectedError,
+                        aiohttp.client_exceptions.ClientConnectionError,
+                        RuntimeError) as exc:
+                    pause = True
                     LOGGER.info(
-                        f'api query helpshift rate limit: {err_message}', extra={
+                        f'api query helpshift connection error {status}: {err_message}', extra={
                             'url': url
                         }
                     )
-                elif status >= 500 and num_retries < self.MAX_RETRIES:
-                    LOGGER.info(
-                        f'api query helpshift 5xx error {status}: {err_message}', extra={
-                            'url': url
-                        }
-                    )
 
-            except (aiohttp.client_exceptions.ServerDisconnectedError,
-                    aiohttp.client_exceptions.ClientConnectionError,
-                    RuntimeError) as exc:
-                pause = True
-                LOGGER.info(
-                    f'api query helpshift connection error {status}: {err_message}', extra={
-                        'url': url
-                    }
-                )
+                except (aiohttp.ClientError) as exc:
+                    raise Exception(f'helpshift query error: {exc}')
 
-            except (aiohttp.ClientError) as exc:
-                raise Exception(f'helpshift query error: {exc}')
-
-            wait_s = max(wait_s, self.MIN_WAIT)
-            if pause:
-                # We're rate limited, make all requests wait
-                await self.global_pause(wait_s)
-            elif wait_s:
-                # This particular request had an error, so only it will wait
-                await asyncio.sleep(wait_s)
+                wait_s = max(wait_s, self.MIN_WAIT)
+                if pause:
+                    # We're rate limited, make all requests wait
+                    await self.global_pause(wait_s)
+                elif wait_s:
+                    # This particular request had an error, so only it will wait
+                    await asyncio.sleep(wait_s)
 
     async def paging_get(self, url, results_key, replication_key=None, **get_args):
         next_page = 1
