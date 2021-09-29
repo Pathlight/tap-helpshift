@@ -114,6 +114,7 @@ class SyncApplication:
         self.stream_name_by_task = {}
         self.stream_schedule = defaultdict(int)
         self.stream_counters = {}
+        self.sync_tasks = set()
 
     def write_schemas(self):
         for stream in self.selected_streams:
@@ -146,6 +147,7 @@ class SyncApplication:
         counter = self.stream_counters[stream_name]
         instance = STREAMS[stream_name](self.client, start_date, sync_stream_bg=self.sync_stream_bg)
         task = asyncio.create_task(sync_stream(state, instance, counter, *args, start_date=start_date))
+        self.sync_tasks.add(task)
         self.stream_name_by_task[task] = stream_name
 
     def spawn_selected_streams(self, state):
@@ -166,16 +168,15 @@ class SyncApplication:
         """
 
         try:
-            all_tasks = set(self.stream_name_by_task.keys()) | asyncio.all_tasks()
-            if not all_tasks:
+            self.sync_tasks = {t for t in self.sync_tasks if not t.done()}
+            if not self.sync_tasks:
                 # No tasks left to await, we're all done!
                 return False
 
-            for task in asyncio.as_completed(all_tasks, timeout=timeout):
+            for task in asyncio.as_completed(self.sync_tasks, timeout=timeout):
                 await task
-                if task in self.stream_name_by_task:
-                    stream_name = self.stream_name_by_task.pop(task)
-                    self.stream_schedule[stream_name] = time.monotonic() + stream_cooldown
+                # Task is done, remove it from stream_name_by_task
+                self.stream_name_by_task.pop(task, None)
         except asyncio.TimeoutError:
             pass
 
