@@ -6,12 +6,16 @@ spec](https://github.com/singer-io/getting-started/blob/master/SPEC.md).
 
 This tap:
 
-- Pulls raw data from [FIXME](http://example.com)
+- Pulls raw data from the [Helpshift API](https://apidocs.helpshift.com/#/)
 - Extracts the following resources:
-  - [FIXME](http://example.com)
+  - Issue
+  - Issues Analytics
+  - Messages
+  - Apps
+  - Agents   
 - Outputs the schema for each resource
 - Incrementally pulls data based on the input state
 
 ---
 
-Copyright &copy; 2018 Stitch
+Copyright &copy; 2021 Pathlight
