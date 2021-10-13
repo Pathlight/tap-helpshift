@@ -170,48 +170,52 @@ class HelpshiftAPI:
                         resp.raise_for_status()
                         return await resp.json()
 
-                except (aiohttp.client_exceptions.ClientResponseError,
-                        aiohttp.client_exceptions.ClientPayloadError) as exc:
-                    if status == 429 and num_retries < self.MAX_RETRIES:
-                        match = re.search(r'retry after (.*) UTC', err_message or '')
-                        retry_after = None
-                        if match:
-                            # If we get a request to retry after a certain time, we'll respect it.
-                            try:
-                                retry_after = dateutil.parser.parse(match.group(1))
-                            except (TypeError, ValueError):
-                                pass
+                except Exception as exc:
+                    if num_retries >= self.MAX_RETRIES:
+                        raise
 
-                        await self.rate_limiter.rate_limited(until=retry_after)
-                        if retry_after:
-                            now = datetime.datetime.utcnow().replace(tzinfo=retry_after.tzinfo)
-                            wait_s = (retry_after - now).total_seconds()
-                            LOGGER.info('retry after %r', retry_after)
+                    if isinstance(exc, (aiohttp.client_exceptions.ClientResponseError, aiohttp.client_exceptions.ClientPayloadError)):
+                        if num_retries >= self.MAX_RETRIES:
+                            raise
 
+                        if status == 429:
+                            match = re.search(r'retry after (.*) UTC', err_message or '')
+                            retry_after = None
+                            if match:
+                                # If we get a request to retry after a certain time, we'll respect it.
+                                try:
+                                    retry_after = dateutil.parser.parse(match.group(1))
+                                except (TypeError, ValueError):
+                                    pass
+
+                            await self.rate_limiter.rate_limited(until=retry_after)
+                            if retry_after:
+                                now = datetime.datetime.utcnow().replace(tzinfo=retry_after.tzinfo)
+                                wait_s = (retry_after - now).total_seconds()
+                                LOGGER.info('retry after %r', retry_after)
+
+                            LOGGER.info(
+                                f'api query helpshift rate limit: {err_message}', extra={
+                                    'url': url
+                                }
+                            )
+                        elif status >= 500:
+                            LOGGER.info(
+                                f'api query helpshift 5xx error {status}: {err_message}', extra={
+                                    'url': url
+                                }
+                            )
+
+                    elif isinstance(exc, (aiohttp.client_exceptions.ServerDisconnectedError, aiohttp.client_exceptions.ClientConnectionError, RuntimeError)):
+                        pause = True
                         LOGGER.info(
-                            f'api query helpshift rate limit: {err_message}', extra={
+                            f'api query helpshift connection error {status}: {err_message}', extra={
                                 'url': url
                             }
                         )
-                    elif status >= 500 and num_retries < self.MAX_RETRIES:
-                        LOGGER.info(
-                            f'api query helpshift 5xx error {status}: {err_message}', extra={
-                                'url': url
-                            }
-                        )
 
-                except (aiohttp.client_exceptions.ServerDisconnectedError,
-                        aiohttp.client_exceptions.ClientConnectionError,
-                        RuntimeError) as exc:
-                    pause = True
-                    LOGGER.info(
-                        f'api query helpshift connection error {status}: {err_message}', extra={
-                            'url': url
-                        }
-                    )
-
-                except (aiohttp.ClientError) as exc:
-                    raise Exception(f'helpshift query error: {exc}')
+                    elif isinstance(exc, aiohttp.ClientError):
+                        raise Exception(f'helpshift query error: {exc}')
 
                 wait_s = max(wait_s, self.MIN_WAIT)
                 if pause:
@@ -220,6 +224,8 @@ class HelpshiftAPI:
                 elif wait_s:
                     # This particular request had an error, so only it will wait
                     await asyncio.sleep(wait_s)
+
+        assert False, 'unreachable'
 
     async def paging_get(self, url, results_key, replication_key=None, **get_args):
         next_page = 1
