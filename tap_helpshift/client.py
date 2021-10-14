@@ -212,6 +212,14 @@ class HelpshiftAPI:
                         else:
                             raise
 
+                    elif isinstance(exc, asyncio.TimeoutError):
+                        # Retry on timeout
+                        LOGGER.info(
+                            f'api query helpshift error {status}: {exc}', extra={
+                                'url': url
+                            }
+                        )
+
                     elif isinstance(exc, (aiohttp.client_exceptions.ServerDisconnectedError, aiohttp.client_exceptions.ClientConnectionError, RuntimeError)):
                         pause = True
                         LOGGER.info(
