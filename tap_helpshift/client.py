@@ -171,13 +171,13 @@ class HelpshiftAPI:
                         return await resp.json()
 
                 except Exception as exc:
+                    # Ensure we log error info so we can diagnose any error handling issues more quickly.
+                    logger.exception('helpshift client exception')
+
                     if num_retries >= self.MAX_RETRIES:
                         raise
 
                     if isinstance(exc, (aiohttp.client_exceptions.ClientResponseError, aiohttp.client_exceptions.ClientPayloadError)):
-                        if num_retries >= self.MAX_RETRIES:
-                            raise
-
                         if status == 429:
                             match = re.search(r'retry after (.*) UTC', err_message or '')
                             retry_after = None
@@ -206,6 +206,9 @@ class HelpshiftAPI:
                                 }
                             )
 
+                        else:
+                            raise
+
                     elif isinstance(exc, (aiohttp.client_exceptions.ServerDisconnectedError, aiohttp.client_exceptions.ClientConnectionError, RuntimeError)):
                         pause = True
                         LOGGER.info(
@@ -214,8 +217,8 @@ class HelpshiftAPI:
                             }
                         )
 
-                    elif isinstance(exc, aiohttp.ClientError):
-                        raise Exception(f'helpshift query error: {exc}')
+                    else:
+                        raise
 
                 wait_s = max(wait_s, self.MIN_WAIT)
                 if pause:
@@ -251,7 +254,10 @@ class HelpshiftAPI:
 
             get_args['page'] = next_page
 
-            data = await self.get(GetType.BASIC, set_query_parameters(url, **get_args))
+            page_url = set_query_parameters(url, **get_args)
+            data = await self.get(GetType.BASIC, page_url)
+            if not data:
+                raise RuntimeError(f'No response for {page_url}')
 
             total_pages = data.get('total-pages', 1)
 
