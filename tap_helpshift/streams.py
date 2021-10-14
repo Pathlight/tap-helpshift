@@ -164,7 +164,7 @@ class IssueAnalytics(Stream):
 
         if issue:
             LOGGER.info('Syncing issue analytics for %r', issue['id'])
-            from_ = None
+            from_ = datetime.datetime.strptime(iso_format(issue['created_at']), ISO_FORMAT)
             issue_id = issue['id']
         else:
             LOGGER.info('Syncing issue analytics')

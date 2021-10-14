@@ -292,44 +292,37 @@ class HelpshiftAPI:
     async def analytics_paging_get(self, url, from_, issue_id=None):
 
         request_args = []
-        if issue_id:
-            request_args.append({
-                'id': issue_id,
+        now = singer.utils.now()
+        # Timezone info needs to match `now` so we can compare without error.
+        from_ = from_.replace(tzinfo=now.tzinfo)
+
+        # Querying for a span of >180 days fails with a 400
+        max_timedelta = datetime.timedelta(days=180)
+        periods = []
+        while now - from_ > max_timedelta:
+            next_from = from_ + max_timedelta
+            periods.append((from_, next_from))
+            from_ = next_from
+        if from_ < now:
+            periods.append((from_, now))
+
+        total_returned = 0
+
+        date_fmt = '%Y-%m-%dT%H:%M:%S'
+        for from_, to in periods:
+            args = {
+                'from': from_.strftime(date_fmt),
+                'to': to.strftime(date_fmt),
                 'timezone': 'UTC',
+                'limit': 2000,
                 'includes': [
                     'human_ttfr',
                     'first_human_responder_id'
                 ]
-            })
-        else:
-            now = singer.utils.now()
-            # Timezone info needs to match `now` so we can compare without error.
-            from_ = from_.replace(tzinfo=now.tzinfo)
-
-            # Querying for a span of >180 days fails with a 400
-            max_timedelta = datetime.timedelta(days=180)
-            periods = []
-            while now - from_ > max_timedelta:
-                next_from = from_ + max_timedelta
-                periods.append((from_, next_from))
-                from_ = next_from
-            if from_ < now:
-                periods.append((from_, now))
-
-            total_returned = 0
-
-            date_fmt = '%Y-%m-%dT%H:%M:%S'
-            for from_, to in periods:
-                request_args.append({
-                    'from': from_.strftime(date_fmt),
-                    'to': to.strftime(date_fmt),
-                    'timezone': 'UTC',
-                    'limit': 2000,
-                    'includes': [
-                        'human_ttfr',
-                        'first_human_responder_id'
-                    ]
-                })
+            }
+            if issue_id:
+                args['id'] = issue_id
+            request_args.append(args)
 
         for get_args in request_args:
             if issue_id:
