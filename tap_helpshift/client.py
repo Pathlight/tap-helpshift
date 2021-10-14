@@ -198,11 +198,7 @@ class HelpshiftAPI:
                                 }
                             )
 
-                        # NOTE: Usually we wouldn't retry for 400 errors, but I
-                        # recently started getting 400s for analytics requests
-                        # for specific issues. Want to see if this helps.
-                        # - PH
-                        elif status >= 400:
+                        elif status >= 500:
                             LOGGER.info(
                                 f'api query helpshift error {status}: {err_message}', extra={
                                     'url': url
