@@ -172,8 +172,6 @@ class HelpshiftAPI:
 
                 except Exception as exc:
                     # Ensure we log error info so we can diagnose any error handling issues more quickly.
-                    LOGGER.exception('helpshift client exception')
-
                     if num_retries >= self.MAX_RETRIES:
                         raise
 
