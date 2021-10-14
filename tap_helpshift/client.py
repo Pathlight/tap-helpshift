@@ -177,7 +177,7 @@ class HelpshiftAPI:
                     if num_retries >= self.MAX_RETRIES:
                         raise
 
-                    if isinstance(exc, (aiohttp.client_exceptions.ClientResponseError, aiohttp.client_exceptions.ClientPayloadError)):
+                    if isinstance(exc, (aiohttp.client_exceptions.ClientResponseError, aiohttp.client_exceptions.ClientPayloadError, aiohttp.client_exceptions.ClientResponseError)):
                         if status == 429:
                             match = re.search(r'retry after (.*) UTC', err_message or '')
                             retry_after = None
@@ -199,9 +199,14 @@ class HelpshiftAPI:
                                     'url': url
                                 }
                             )
-                        elif status >= 500:
+
+                        # NOTE: Usually we wouldn't retry for 400 errors, but I
+                        # recently started getting 400s for analytics requests
+                        # for specific issues. Want to see if this helps.
+                        # - PH
+                        elif status >= 400:
                             LOGGER.info(
-                                f'api query helpshift 5xx error {status}: {err_message}', extra={
+                                f'api query helpshift error {status}: {err_message}', extra={
                                     'url': url
                                 }
                             )
