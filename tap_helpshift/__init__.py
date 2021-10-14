@@ -166,19 +166,16 @@ class SyncApplication:
         """
         Returns True if there are running tasks, False otherwise.
         """
+        self.sync_tasks = {t for t in self.sync_tasks if not t.done()}
+        if not self.sync_tasks:
+            # No tasks left to await, we're all done!
+            return False
 
-        try:
-            self.sync_tasks = {t for t in self.sync_tasks if not t.done()}
-            if not self.sync_tasks:
-                # No tasks left to await, we're all done!
-                return False
-
-            for task in asyncio.as_completed(self.sync_tasks, timeout=timeout):
-                await task
-                # Task is done, remove it from stream_name_by_task
-                self.stream_name_by_task.pop(task, None)
-        except asyncio.TimeoutError:
-            pass
+        done, _ = await asyncio.wait(self.sync_tasks, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            await task
+            # Task is done, remove it from stream_name_by_task
+            self.stream_name_by_task.pop(task, None)
 
         # Live to loop another day
         return True
