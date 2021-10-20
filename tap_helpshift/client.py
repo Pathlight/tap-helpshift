@@ -324,6 +324,7 @@ class HelpshiftAPI:
             }
             if issue_id:
                 args['id'] = issue_id
+                args['limit'] = 1
             request_args.append(args)
 
         for get_args in request_args:
