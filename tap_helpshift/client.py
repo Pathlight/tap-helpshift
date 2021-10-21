@@ -301,12 +301,21 @@ class HelpshiftAPI:
         # Querying for a span of >180 days fails with a 400
         max_timedelta = datetime.timedelta(days=180)
         periods = []
-        while now - from_ > max_timedelta:
-            next_from = from_ + max_timedelta
-            periods.append((from_, next_from))
-            from_ = next_from
-        if from_ < now:
-            periods.append((from_, now))
+        if issue_id:
+            # Helpshift has asked us to make these requests with a 1-second
+            # range in this manner to avoid making expensive requests from
+            # their servers.
+            periods.append((from_, from_ + datetime.timedelta(seconds=1)))
+        else:
+            # Take the full range of time we need to request for and break
+            # it up into 180-day chunks (as 180 days is the largest time
+            # range the Helpshift API will accept for this request).
+            while now - from_ > max_timedelta:
+                next_from = from_ + max_timedelta
+                periods.append((from_, next_from))
+                from_ = next_from
+            if from_ < now:
+                periods.append((from_, now))
 
         total_returned = 0
 
