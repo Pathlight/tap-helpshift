@@ -162,6 +162,7 @@ class HelpshiftAPI:
                 wait_s = 0
 
                 try:
+                    LOGGER.info('GET %s %r', url, params)
                     async with self.session.get(url, params=params) as resp:
                         if resp.status >= 200:
                             status = resp.status
@@ -190,9 +191,9 @@ class HelpshiftAPI:
                             if retry_after:
                                 now = datetime.datetime.utcnow().replace(tzinfo=retry_after.tzinfo)
                                 wait_s = (retry_after - now).total_seconds()
-                                LOGGER.info('retry after %r', retry_after)
+                                LOGGER.debug('retry after %r', retry_after)
 
-                            LOGGER.info(
+                            LOGGER.debug(
                                 f'api query helpshift rate limit: {err_message}', extra={
                                     'url': url
                                 }
