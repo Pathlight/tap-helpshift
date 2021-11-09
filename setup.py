@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
     name="tap-helpshift",
-    version="1.1.4",
+    version="1.2.26",
     description="Singer.io tap for extracting data",
     author="Stitch",
     url="http://singer.io",
@@ -12,7 +12,8 @@ setup(
     install_requires=[
         # NB: Pin these to a more specific version for tap reliability
         "singer-python",
-        "requests",
+        "aiohttp",
+        "python-dateutil",
     ],
     entry_points="""
     [console_scripts]
