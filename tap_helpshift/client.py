@@ -256,7 +256,7 @@ class HelpshiftAPI:
             # requested exceeds 50000. Because records are returned in asc
             # order, we can start a new request at page 1 using the last
             # updated_at time we saw.
-            if next_page * get_args['page-size'] > MAX_PAGE_SIZE:
+            if next_page > MAX_PAGE_SIZE / get_args['page-size']:
                 LOGGER.info(f'helpshift query exceeded {next_page-1} pages, starting loop over')
                 next_page = 1
                 get_args['updated_since'] = max_synced
