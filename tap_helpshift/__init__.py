@@ -96,8 +96,8 @@ class SyncApplication:
         # To keep issue_analytics up to date, we have a secondary tap running that syncs
         # from the beginning of num_days_to_sync ago till now only for issues and issue_analytics.
         # This window can be fairly large so long as it's during non-busy hours
-        num_days_to_sync = config.get('num_days_to_sync')
-        if self.is_secondary_syncer and num_days_to_sync is not None:
+        if self.is_secondary_syncer:
+            num_days_to_sync = config.get('num_days_to_sync', 7)
             now = datetime.now().replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
             to_start_syncing_from = now - timedelta(days=num_days_to_sync)
             timestamp = to_start_syncing_from.timestamp()
