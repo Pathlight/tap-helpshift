@@ -36,7 +36,7 @@ class Stream():
     datetime_fields = None
     date_format = None
 
-    def __init__(self, client=None, start_date=None, sync_stream_bg=None):
+    def __init__(self, client=None, start_date=None, sync_stream_bg=None, use_bookmarks=True):
         self.client = client
         if start_date:
             self.start_date_int = start_date
@@ -47,11 +47,14 @@ class Stream():
             self.start_date_int = int(self.start_date.strftime('%s')) * 1000
 
         self.sync_stream_bg = sync_stream_bg
+        self.use_bookmarks = use_bookmarks
 
     def is_selected(self):
         return self.stream is not None
 
     def update_bookmark(self, state, value):
+        if not self.use_bookmarks:
+            return
         current_bookmark = singer.get_bookmark(state, self.name, self.replication_key)
         if value and iso_format(value) > iso_format(current_bookmark):
             singer.write_bookmark(state, self.name, self.replication_key, value)

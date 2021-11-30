@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from contextlib import ExitStack
 import asyncio
 import copy
@@ -91,6 +92,17 @@ class SyncApplication:
         self.catalog = catalog
 
         self.start_date = config['start_date']
+        self.is_secondary_syncer = config.get('is_secondary_syncer', False)
+        # To keep issue_analytics up to date, we have a secondary tap running that syncs
+        # from the beginning of num_days_to_sync ago till now only for issues and issue_analytics.
+        # This window can be fairly large so long as it's during non-busy hours
+        num_days_to_sync = config.get('num_days_to_sync')
+        if self.is_secondary_syncer and num_days_to_sync is not None:
+            now = datetime.now().replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
+            to_start_syncing_from = now - timedelta(days=num_days_to_sync)
+            timestamp = to_start_syncing_from.timestamp()
+            LOGGER.info(f'Running secondary syncer starting from {to_start_syncing_from}, timestamp (s) {timestamp}')
+            self.start_date = int(timestamp) * 1000 # Start dates are timestamps in ms
 
         self.selected_stream_names = get_selected_streams(catalog)
         validate_dependencies(self.selected_stream_names)
@@ -145,7 +157,11 @@ class SyncApplication:
         if stream_name not in self.stream_counters:
             self.stream_counters[stream_name] = metrics.record_counter(stream_name)
         counter = self.stream_counters[stream_name]
-        instance = STREAMS[stream_name](self.client, start_date, sync_stream_bg=self.sync_stream_bg)
+        use_bookmarks = True
+        if self.is_secondary_syncer and (stream_name == 'issues' or stream_name == 'issue_analytics'):
+            # Don't use bookmarks for the secondary syncer since this is going to full sync
+            use_bookmarks = False
+        instance = STREAMS[stream_name](self.client, start_date, sync_stream_bg=self.sync_stream_bg, use_bookmarks=use_bookmarks)
         task = asyncio.create_task(sync_stream(state, instance, counter, *args, start_date=start_date))
         self.sync_tasks.add(task)
         self.stream_name_by_task[task] = stream_name

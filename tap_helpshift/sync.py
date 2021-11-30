@@ -13,7 +13,7 @@ async def sync_stream(state, instance, counter, *args, start_date=None):
     LOGGER.info("%s: Starting sync", stream_name)
 
     # If we have a bookmark, use it; otherwise use start_date & update bookmark with it
-    if (instance.replication_method == 'INCREMENTAL' and
+    if (instance.use_bookmarks and instance.replication_method == 'INCREMENTAL' and
             not state.get('bookmarks', {}).get(stream.tap_stream_id, {}).get(instance.replication_key)):
         singer.write_bookmark(
             state,
