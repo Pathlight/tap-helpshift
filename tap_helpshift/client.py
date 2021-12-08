@@ -239,7 +239,7 @@ class HelpshiftAPI:
         assert False, 'unreachable'
 
     async def paging_get(self, url, results_key, replication_key=None, **get_args):
-        MAX_PAGE_SIZE = 50000
+        MAX_NUM_RESULTS = 50000
         next_page = 1
         total_returned = 0
         max_synced = None
@@ -256,7 +256,7 @@ class HelpshiftAPI:
             # requested exceeds 50000. Because records are returned in asc
             # order, we can start a new request at page 1 using the last
             # updated_at time we saw.
-            if next_page > MAX_PAGE_SIZE / get_args['page-size']:
+            if next_page > MAX_NUM_RESULTS / get_args['page-size']:
                 LOGGER.info(f'helpshift query exceeded {next_page-1} pages, starting loop over')
                 next_page = 1
                 get_args['updated_since'] = max_synced
