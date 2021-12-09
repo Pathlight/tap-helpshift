@@ -129,6 +129,18 @@
         "null",
         "object"
       ]
+    },
+    "feedback_comment": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "feedback_rating": {
+      "type": [
+        "null",
+        "integer"
+      ]
     }
   }
 }

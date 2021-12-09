@@ -91,7 +91,7 @@ class Issues(Stream):
             self.url,
             self.results_key,
             self.replication_key,
-            includes='["custom_fields", "meta"]',
+            includes='["custom_fields","meta","feedback"]',
             updated_since=curr_synced_thru
         )
 
