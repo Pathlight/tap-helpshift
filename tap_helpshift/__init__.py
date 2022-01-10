@@ -91,6 +91,16 @@ class SyncApplication:
         self.catalog = catalog
 
         self.start_date = config['start_date']
+        self.end_date = config.get('end_date', 0)
+        if self.end_date >= self.start_date:
+            LOGGER.info("fetching data up till end date specified", extra={
+                "start_date": self.start_date, "end_date": self.end_date
+            })
+        else:
+            self.end_date = 0
+            LOGGER.info("no end_date or end_date after start_date, syncing up till now", extra={
+                "start_date": self.start_date, "end_date": self.end_date
+            })
 
         self.selected_stream_names = get_selected_streams(catalog)
         validate_dependencies(self.selected_stream_names)
@@ -139,13 +149,14 @@ class SyncApplication:
                         sub_instance.key_properties
                     )
 
-    def sync_stream_bg(self, stream_name, state, *args, start_date=None):
+    def sync_stream_bg(self, stream_name, state, *args, start_date=None, end_date=None):
         start_date = start_date or self.start_date
+        end_date = end_date or self.end_date
 
         if stream_name not in self.stream_counters:
             self.stream_counters[stream_name] = metrics.record_counter(stream_name)
         counter = self.stream_counters[stream_name]
-        instance = STREAMS[stream_name](self.client, start_date, sync_stream_bg=self.sync_stream_bg)
+        instance = STREAMS[stream_name](self.client, start_date, end_date, sync_stream_bg=self.sync_stream_bg)
         task = asyncio.create_task(sync_stream(state, instance, counter, *args, start_date=start_date))
         self.sync_tasks.add(task)
         self.stream_name_by_task[task] = stream_name

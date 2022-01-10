@@ -36,15 +36,22 @@ class Stream():
     datetime_fields = None
     date_format = None
 
-    def __init__(self, client=None, start_date=None, sync_stream_bg=None):
+    def __init__(self, client=None, start_date=None, end_date=None, sync_stream_bg=None):
         self.client = client
         if start_date:
-            self.start_date_int = start_date
             self.start_date = datetime.datetime.fromtimestamp(start_date / 1000)
+            self.start_date_int = start_date
         else:
             # No need to go further back than 2011, the year Helpshift was founded.
             self.start_date = datetime.datetime(2011, 1, 1)
             self.start_date_int = int(self.start_date.strftime('%s')) * 1000
+
+        if end_date:
+            self.end_date = datetime.datetime.fromtimestamp(end_date / 1000)
+            self.end_date_int = end_date
+        else:
+            self.end_date = 0
+            self.end_date_int = 0
 
         self.sync_stream_bg = sync_stream_bg
 
@@ -87,12 +94,20 @@ class Issues(Stream):
         messages_stream = Messages(self.client)
         analytics_stream = IssueAnalytics(self.client)
 
+        extra = {}
+        if self.end_date_int:
+            extra = {'updated_until': self.end_date_int}
+            LOGGER.info(f'specified updated_until time {self.end_date_int}')    
+        else:
+            LOGGER.info('no updated_until time specified, syncing up till now')
+
         records = self.client.paging_get(
             self.url,
             self.results_key,
             self.replication_key,
             includes='["custom_fields","meta","feedback"]',
-            updated_since=curr_synced_thru
+            updated_since=curr_synced_thru,
+            **extra
         )
 
         async for row in records:
