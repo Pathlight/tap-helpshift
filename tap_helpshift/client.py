@@ -257,7 +257,7 @@ class HelpshiftAPI:
             # order, we can start a new request at page 1 using the last
             # updated_at time we saw.
             if next_page > MAX_NUM_RESULTS / get_args['page-size']:
-                LOGGER.info(f'helpshift query exceeded {next_page-1} pages, starting loop over')
+                LOGGER.info(f'helpshift query exceeded {next_page-1} pages, starting loop over with new updated_since time: {max_synced}.')
                 next_page = 1
                 get_args['updated_since'] = max_synced
 
@@ -276,6 +276,7 @@ class HelpshiftAPI:
                 'page': next_page,
                 'results_key': results_key,
                 'url': url,
+                'get_args': get_args,
                 'total_returned': total_returned
             })
 
@@ -290,6 +291,7 @@ class HelpshiftAPI:
         LOGGER.info('helpshift paging request complete: %r', {
             'results_key': results_key,
             'last_url': url,
+            'last_get_args': get_args,
             'total_returned': total_returned
         })
 
