@@ -50,7 +50,7 @@ class Stream():
             self.end_date = datetime.datetime.fromtimestamp(end_date / 1000)
             self.end_date_int = end_date
         else:
-            self.end_date = 0
+            self.end_date = None
             self.end_date_int = 0
 
         self.sync_stream_bg = sync_stream_bg
