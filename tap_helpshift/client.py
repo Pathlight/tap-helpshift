@@ -7,6 +7,7 @@ import re
 import time
 import urllib
 import random
+import os
 
 import aiohttp
 import singer
@@ -15,6 +16,7 @@ import dateutil.parser
 
 LOGGER = singer.get_logger()
 
+DEFAULT_TIMEOUT = os.getenv('DEFAULT_HTTP_TIMEOUT')
 
 def set_query_parameters(url, **params):
     """Given a URL, set or replace a query parameter and return the
@@ -137,7 +139,7 @@ class HelpshiftAPI:
             self.running.set()
             LOGGER.info('Requests unpaused')
 
-    async def get(self, get_type, url, params=None):
+    async def get(self, get_type, url, params=None, timeout=None):
         if not url.startswith('https://'):
             if get_type == GetType.BASIC:
                 url = f'{self.base_url}/{url}'
@@ -163,7 +165,7 @@ class HelpshiftAPI:
 
                 try:
                     LOGGER.info('GET %s %r', url, params)
-                    async with self.session.get(url, params=params) as resp:
+                    async with self.session.get(url, params=params, timeout=timeout) as resp:
                         if resp.status >= 200:
                             status = resp.status
                         if not status or status >= 400:
@@ -264,7 +266,7 @@ class HelpshiftAPI:
             get_args['page'] = next_page
 
             page_url = set_query_parameters(url, **get_args)
-            data = await self.get(GetType.BASIC, page_url)
+            data = await self.get(GetType.BASIC, page_url, timeout=DEFAULT_TIMEOUT)
             if not data:
                 raise RuntimeError(f'No response for {page_url}')
 
@@ -350,7 +352,7 @@ class HelpshiftAPI:
                     **get_args
                 )
 
-                data = await self.get(GetType.ANALYTICS, url)
+                data = await self.get(GetType.ANALYTICS, url, timeout=DEFAULT_TIMEOUT)
                 if not data:
                     break
                 results = data.get('results')
