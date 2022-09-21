@@ -164,7 +164,7 @@ class HelpshiftAPI:
                 wait_s = 0
 
                 try:
-                    LOGGER.info('GET %s %r', url, params)
+                    LOGGER.info('GET %s %r timeout=%s', url, params, timeout)
                     async with self.session.get(url, params=params, timeout=timeout) as resp:
                         if resp.status >= 200:
                             status = resp.status
