@@ -139,7 +139,7 @@ class HelpshiftAPI:
             self.running.set()
             LOGGER.info('Requests unpaused')
 
-    async def get(self, get_type, url, params=None, timeout=None):
+    async def get(self, get_type, url, params=None, timeout=DEFAULT_TIMEOUT):
         if not url.startswith('https://'):
             if get_type == GetType.BASIC:
                 url = f'{self.base_url}/{url}'
@@ -266,7 +266,7 @@ class HelpshiftAPI:
             get_args['page'] = next_page
 
             page_url = set_query_parameters(url, **get_args)
-            data = await self.get(GetType.BASIC, page_url, timeout=DEFAULT_TIMEOUT)
+            data = await self.get(GetType.BASIC, page_url)
             if not data:
                 raise RuntimeError(f'No response for {page_url}')
 
@@ -352,7 +352,7 @@ class HelpshiftAPI:
                     **get_args
                 )
 
-                data = await self.get(GetType.ANALYTICS, url, timeout=DEFAULT_TIMEOUT)
+                data = await self.get(GetType.ANALYTICS, url)
                 if not data:
                     break
                 results = data.get('results')
