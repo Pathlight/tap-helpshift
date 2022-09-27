@@ -7,6 +7,7 @@ import re
 import time
 import urllib
 import random
+import os
 
 import aiohttp
 import singer
@@ -15,6 +16,7 @@ import dateutil.parser
 
 LOGGER = singer.get_logger()
 
+DEFAULT_TIMEOUT = os.getenv('DEFAULT_HTTP_TIMEOUT')
 
 def set_query_parameters(url, **params):
     """Given a URL, set or replace a query parameter and return the
@@ -137,7 +139,7 @@ class HelpshiftAPI:
             self.running.set()
             LOGGER.info('Requests unpaused')
 
-    async def get(self, get_type, url, params=None):
+    async def get(self, get_type, url, params=None, timeout=DEFAULT_TIMEOUT):
         if not url.startswith('https://'):
             if get_type == GetType.BASIC:
                 url = f'{self.base_url}/{url}'
@@ -162,8 +164,8 @@ class HelpshiftAPI:
                 wait_s = 0
 
                 try:
-                    LOGGER.info('GET %s %r', url, params)
-                    async with self.session.get(url, params=params) as resp:
+                    LOGGER.info('GET %s %r timeout=%s', url, params, timeout)
+                    async with self.session.get(url, params=params, timeout=timeout) as resp:
                         if resp.status >= 200:
                             status = resp.status
                         if not status or status >= 400:
