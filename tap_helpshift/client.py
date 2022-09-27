@@ -16,7 +16,7 @@ import dateutil.parser
 
 LOGGER = singer.get_logger()
 
-DEFAULT_TIMEOUT = os.getenv('DEFAULT_HTTP_TIMEOUT') or '10'
+DEFAULT_TIMEOUT = os.getenv('DEFAULT_HTTP_TIMEOUT')
 
 def set_query_parameters(url, **params):
     """Given a URL, set or replace a query parameter and return the
