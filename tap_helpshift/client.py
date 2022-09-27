@@ -16,7 +16,7 @@ import dateutil.parser
 
 LOGGER = singer.get_logger()
 
-DEFAULT_TIMEOUT = os.getenv('DEFAULT_HTTP_TIMEOUT')
+DEFAULT_TIMEOUT = os.getenv('DEFAULT_HTTP_TIMEOUT') or '10'
 
 def set_query_parameters(url, **params):
     """Given a URL, set or replace a query parameter and return the
@@ -165,7 +165,7 @@ class HelpshiftAPI:
 
                 try:
                     LOGGER.info('GET %s %r timeout=%s', url, params, timeout)
-                    async with self.session.get(url, params=params, timeout=timeout) as resp:
+                    async with self.session.get(url, params=params, timeout=(timeout and int(timeout))) as resp:
                         if resp.status >= 200:
                             status = resp.status
                         if not status or status >= 400:
