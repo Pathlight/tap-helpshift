@@ -19,11 +19,11 @@ import singer.metrics as metrics
 from tap_helpshift.client import HelpshiftAPI
 from tap_helpshift.streams import STREAMS, SUB_STREAMS
 from tap_helpshift.sync import sync_stream
-from tap_helpshift.util import consume_q
+from tap_helpshift.util import consume_q, get_logger
 
 
 REQUIRED_CONFIG_KEYS = ["start_date", "api_key", "subdomain"]
-LOGGER = singer.get_logger()
+LOGGER = get_logger()
 
 
 def get_abs_path(path):

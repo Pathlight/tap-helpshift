@@ -12,9 +12,10 @@ import os
 import aiohttp
 import singer
 import dateutil.parser
+from tap_helpshift.util import get_logger
 
 
-LOGGER = singer.get_logger()
+LOGGER = get_logger()
 
 timeout = os.getenv('DEFAULT_HTTP_TIMEOUT')
 try:
@@ -223,9 +224,8 @@ class HelpshiftAPI:
                     elif isinstance(exc, asyncio.TimeoutError):
                         # Retry on timeout
                         LOGGER.info(
-                            f'api query helpshift error {status}: {exc}', extra={
-                                'url': url
-                            }
+                            f'api query helpshift timeout error {status}: {exc}',
+                            extra={'url': url}
                         )
 
                     elif isinstance(exc, (aiohttp.client_exceptions.ServerDisconnectedError, aiohttp.client_exceptions.ClientConnectionError, RuntimeError)):

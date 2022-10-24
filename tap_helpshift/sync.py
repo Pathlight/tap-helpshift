@@ -1,8 +1,9 @@
 import singer
 from singer import metadata
+from tap_helpshift.util import get_logger
 
 
-LOGGER = singer.get_logger()
+LOGGER = get_logger()
 
 
 async def sync_stream(state, instance, counter, *args, start_date=None):
