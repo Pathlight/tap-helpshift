@@ -130,6 +130,11 @@ class HelpshiftAPI:
         subdomain = config['subdomain']
         self.base_url = 'https://api.helpshift.com/v1/{}'.format(subdomain)
         self.analytics_base_url = 'https://analytics.helpshift.com/v1/{}'.format(subdomain)
+        config_timeout = config.get('timeout')
+        if DEFAULT_TIMEOUT is not None:
+            self.timeout = max(config_timeout or 0, DEFAULT_TIMEOUT)
+        else:
+            self.timeout = config_timeout
 
     async def global_pause(self, seconds):
         if self.running.is_set():
@@ -143,7 +148,7 @@ class HelpshiftAPI:
             self.running.set()
             LOGGER.info('Requests unpaused')
 
-    async def get(self, get_type, url, params=None, timeout=DEFAULT_TIMEOUT):
+    async def get(self, get_type, url, params=None):
         if not url.startswith('https://'):
             if get_type == GetType.BASIC:
                 url = f'{self.base_url}/{url}'
@@ -168,8 +173,8 @@ class HelpshiftAPI:
                 wait_s = 0
 
                 try:
-                    LOGGER.info('GET %s %r timeout=%s', url, params, str(timeout))
-                    async with self.session.get(url, params=params, timeout=(timeout)) as resp:
+                    LOGGER.info(f'GET {url} params={params} timeout={self.timeout}')
+                    async with self.session.get(url, params=params, timeout=self.timeout) as resp:
                         if resp.status >= 200:
                             status = resp.status
                         if not status or status >= 400:
