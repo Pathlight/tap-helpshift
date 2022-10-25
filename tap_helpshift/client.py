@@ -135,7 +135,10 @@ class HelpshiftAPI:
         if DEFAULT_TIMEOUT is not None:
             self.timeout = max(config_timeout or 0, DEFAULT_TIMEOUT)
         else:
+            if config_timeout is not None and config_timeout <= 0:
+                raise ValueError('Timeout cannot be set to a value less than or equal to 0.')
             self.timeout = config_timeout
+        # Because we're using aiohttp, the default timeout is set to 5 minutes if self.timeout is None
 
     async def global_pause(self, seconds):
         if self.running.is_set():
