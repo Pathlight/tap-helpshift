@@ -7,10 +7,10 @@ import queue
 from singer.utils import strftime as singer_strftime
 import singer
 
-from .util import consume_q
+from .util import consume_q, get_logger
 from .sync import sync_stream
 
-LOGGER = singer.get_logger()
+LOGGER = get_logger()
 
 SUB_STREAMS = {
     'issues': ['messages']
