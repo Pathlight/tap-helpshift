@@ -21,6 +21,8 @@ class TapLoggerAdapter(logging.LoggerAdapter):
        uses the wrapped adapter's `extra`)
     """
     def __init__(self, logger, extra=None):
+        if not extra:
+            extra = {}
         super().__init__(logger, extra)
 
     def process(self, msg, kwargs):
@@ -32,5 +34,5 @@ class TapLoggerAdapter(logging.LoggerAdapter):
         formatted_msg = ', '.join([msg] + [f'{k}={v}' for k, v in kwargs['extra'].items()])
         return formatted_msg, kwargs
 
-def get_logger(extra=None):
+def get_logger(extra={}):
     return TapLoggerAdapter(singer.get_logger(), extra)
