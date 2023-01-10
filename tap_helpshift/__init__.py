@@ -3,11 +3,14 @@ from collections import defaultdict
 from contextlib import ExitStack
 import asyncio
 import copy
+import datetime
 import json
 import os
 import queue
 import threading
 import time
+from dateutil.parser import parse as parse_datetime
+from typing import Union
 
 from singer import utils, metadata
 from singer.catalog import Catalog, CatalogEntry
@@ -90,15 +93,18 @@ class SyncApplication:
         self.client = client
         self.catalog = catalog
 
-        self.start_date = config['start_date']
-        self.end_date = config.get('end_date', 0)
-        if self.end_date >= self.start_date:
-            LOGGER.info("fetching data up till end date specified", extra={
+        self.start_date: 'datetime.datetime' = parse_datetime(config['start_date'])
+        end_date = config.get('end_date')
+        self.end_date: Union[None, 'datetime.datetime'] = None
+        if end_date:
+            self.end_date = parse_datetime(end_date)
+
+        if not self.end_date:
+            LOGGER.info("no end_date or end_date after start_date, syncing up till now", extra={
                 "start_date": self.start_date, "end_date": self.end_date
             })
-        else:
-            self.end_date = 0
-            LOGGER.info("no end_date or end_date after start_date, syncing up till now", extra={
+        elif self.end_date >= self.start_date:
+            LOGGER.info("fetching data up till end date specified", extra={
                 "start_date": self.start_date, "end_date": self.end_date
             })
 
@@ -150,8 +156,8 @@ class SyncApplication:
                     )
 
     def sync_stream_bg(self, stream_name, state, *args, start_date=None, end_date=None):
-        start_date = start_date or self.start_date
-        end_date = end_date or self.end_date
+        start_date: 'datetime.datetime' = start_date or self.start_date
+        end_date: Union[None, 'datetime.datetime'] = end_date or self.end_date
 
         if stream_name not in self.stream_counters:
             self.stream_counters[stream_name] = metrics.record_counter(stream_name)
