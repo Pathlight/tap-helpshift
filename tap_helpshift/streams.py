@@ -90,9 +90,11 @@ class Issues(Stream):
 
     async def sync(self, state):
         try:
-            sync_thru = datetime_to_epoch_seconds(singer.get_bookmark(
-                state, self.name, self.replication_key
-            )) or self.start_date_epoch_milliseconds
+            singer_bookmark_value = singer.get_bookmark(state, self.name, self.replication_key)
+            # If the singer_bookmark_value is not a string, it'll get caught as a TypeError
+            singer_bookmark_datetime: 'datetime.datetime' = parse_datetime(singer_bookmark_value)
+            singer_bookmark_epoch_milliseconds = datetime_to_epoch_seconds(singer_bookmark_datetime) * 1000
+            sync_thru = singer_bookmark_epoch_milliseconds or self.start_date_epoch_milliseconds
         except TypeError:
             sync_thru = self.start_date_epoch_milliseconds
 
