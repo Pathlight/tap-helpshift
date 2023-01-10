@@ -1,0 +1,9 @@
+{
+    "api_key": "api_key",
+    "subdomain": "subdomain",
+    "start_date": "2022-01-01T12:00:00Z",
+    "end_date": "2022-01-02T12:00:00Z",
+    "rate_limit_allowance_percent": 1,
+    "rate_limit_concurrent_allowance_percent": 0.333,
+    "timeout": 300
+}
