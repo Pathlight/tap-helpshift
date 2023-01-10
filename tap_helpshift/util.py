@@ -31,7 +31,7 @@ class TapLoggerAdapter(logging.LoggerAdapter):
         if isinstance(self.logger, logging.LoggerAdapter):
             msg, kwargs = self.logger.process(msg, kwargs)
         kwargs['extra'] = {**kwargs['extra'], **extra}
-        formatted_msg = ', '.join([msg] + [f'{k}={v}' for k, v in kwargs['extra'].items()])
+        formatted_msg = ', '.join([str(msg)] + [f'{str(k)}={str(v)}' for k, v in kwargs['extra'].items()])
         return formatted_msg, kwargs
 
 def get_logger(extra={}):
