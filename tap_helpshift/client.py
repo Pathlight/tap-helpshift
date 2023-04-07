@@ -346,7 +346,8 @@ class HelpshiftAPI:
                 'limit': 2000,
                 'includes': [
                     'human_ttfr',
-                    'first_human_responder_id'
+                    'first_human_responder_id',
+                    'cifs'
                 ]
             }
             if issue_id:
